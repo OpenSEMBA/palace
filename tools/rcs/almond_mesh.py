@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a PEC NASA almond scattering mesh (almond inside an outer sphere).
+"""Generate a PEC NASA almond scattering mesh (almond inside a box).
 
 The almond geometry follows the EMCC/NASA benchmark definition with the
 corrected constants (the published expressions in some application notes use
@@ -11,8 +11,10 @@ Construction: the half-profile is revolved about the x axis and the small
 openings left by truncating the sharp tips are capped with conformal disks
 built from the tube's boundary edges. The cross sections are ellipses with a
 3:1 width-to-thickness ratio, obtained by scaling all mesh nodes by 1/3 in z;
-this also flattens the outer spherical boundary into an ellipsoid with z
-semi-axis OUTER_RADIUS/3 (still adequate clearance for the absorbing boundary).
+this also flattens the outer box boundary in z (z half-size OUTER_RADIUS/3,
+still adequate clearance for the absorbing boundary). A box boundary is used
+because Palace's ABC drops the curvature term and reflects from curved
+boundaries.
 
 Usage: almond_mesh.py OUTPUT.msh [OUTER_RADIUS] [HMIN] [HMAX]
 """
@@ -66,8 +68,9 @@ caps = [occ.addPlaneSurface([occ.addCurveLoop([edge])]) for edge in edges]
 almond = occ.addVolume([occ.addSurfaceLoop([surface] + caps)])
 occ.synchronize()
 
-# Outer spherical domain.
-outer = occ.addSphere(0, 0, 0, R)
+# Outer box domain (flat faces avoid the curvature term that Palace's ABC
+# ignores; see sphere_mesh.py).
+outer = occ.addBox(-R, -R, -R, 2 * R, 2 * R, 2 * R)
 occ.cut([(3, outer)], [(3, almond)])
 occ.synchronize()
 

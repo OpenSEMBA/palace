@@ -5,10 +5,11 @@
 # sphere at several frequencies, comparing the monostatic radar cross section
 # normalized by the projected area, `sigma/(pi a^2)`, with the Mie series.
 #
-# Convention: the plane wave propagates along `+z` (`Direction = [0,0,1]`,
-# `Polarization = [1,0,0]`), so the monostatic (backscatter) direction is
-# `theta = 180` in Palace's far-field angle convention. The Mie reference
-# `monostatic_normalized(ka)` uses the same backscatter convention.
+# Convention: `Direction = [0,0,1]` specifies the incidence direction; under the
+# incident phasor convention consistent with Palace's Stratton-Chu far-field
+# kernel, the wave travels along `-Direction`, so the monostatic (backscatter)
+# direction is `theta = 0` in Palace's far-field angle convention. The Mie
+# reference `monostatic_normalized(ka)` uses the same backscatter convention.
 #
 # Run with `RUN_PALACE=1` to generate the meshes and run the cases; otherwise
 # existing outputs are parsed. This file is jupytext percent format.
@@ -39,7 +40,6 @@ RUN_PALACE = os.environ.get("RUN_PALACE", "0") == "1"
 NPROC = int(os.environ.get("RCS_NPROC", "16"))
 RADIUS = 1.0
 KA_VALUES = [0.5, 1.0, 2.0, 3.0]
-CLEARANCE_LAMBDA = 1.0
 WORKDIR.mkdir(parents=True, exist_ok=True)
 FIGDIR.mkdir(parents=True, exist_ok=True)
 
@@ -76,10 +76,12 @@ if RUN_PALACE:
         d.mkdir(exist_ok=True)
         f = ka * C0 / (2.0 * np.pi * RADIUS)
         lam = C0 / f
-        R = RADIUS + CLEARANCE_LAMBDA * lam
-        hmin = min(RADIUS / 6.0, lam / 20.0)
-        hmax = lam / 10.0
-        dmax = min(lam, 2.5 * RADIUS)
+        # Box outer boundary (Palace's ABC ignores the boundary curvature term,
+        # so a curved boundary reflects; flat box faces absorb well).
+        R = 3.77
+        hmin = min(0.22, lam / 20.0)
+        hmax = min(0.94, lam / 10.0)
+        dmax = 2.83
         subprocess.run([sys.executable, str(TOOLS / "sphere_mesh.py"), "sphere.msh",
                         str(RADIUS), str(R), str(hmin), str(hmax), str(dmax)],
                        cwd=d, check=True)
@@ -101,8 +103,11 @@ def read_monostatic(case):
     ip = header.index("phi (deg.)")
     ir = header.index("RCS (m^2)")
     for row in rows[1:]:
-        # Backscatter for propagation +z is theta = 180.
-        if abs(float(row[it]) - 180.0) < 1e-6 and abs(float(row[ip])) < 1e-6:
+        # With the far-field kernel convention used by Palace's Stratton-Chu
+        # implementation, the incident phasor exp(-i k k_hat.x) propagates
+        # along -k_hat, so for Direction=+z the backscatter (monostatic)
+        # direction is theta = 0.
+        if abs(float(row[it])) < 1e-6:
             return float(row[ir])
     return None
 

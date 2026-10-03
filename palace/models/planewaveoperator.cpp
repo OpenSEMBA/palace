@@ -159,11 +159,13 @@ void PlaneWaveData::GetElectricField(const mfem::Vector &x, double omega, int at
   {
     phase += direction(d) * (x(d) - origin(d));
   }
-  // Phasor exp(+i k k_hat . x): with Palace's internal time convention this
-  // propagates along +k_hat, so Direction is the propagation direction,
-  // consistent with the far-field observation angle convention (the
-  // backscatter/monostatic direction is -k_hat).
-  phase *= k;
+  // Phasor exp(-i k k_hat . x): the incident field is consistent with the
+  // Stratton-Chu far-field kernel exp(+i k r0 . x) used in postprocessing
+  // (free-space incident subtraction cancels to machine precision). Under this
+  // convention the configured Direction is the direction from the observer
+  // toward the source, i.e. the wave travels along -Direction, and the
+  // monostatic/backscatter direction is +Direction.
+  phase *= -k;
   const std::complex<double> e = amplitude * std::exp(std::complex<double>(0.0, phase));
   for (int d = 0; d < 3; d++)
   {
