@@ -17,6 +17,7 @@
 #include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/planewaveoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
@@ -80,9 +81,14 @@ private:
   LumpedPortOperator lumped_port_op;
   WavePortOperator wave_port_op;
   FloquetPortOperator floquet_port_op;
+  PlaneWaveOperator plane_wave_op;
   SurfaceCurrentOperator surf_j_op;
 
   PortExcitations port_excitation_helper;
+
+  // Cached second-order farfield boundary curl-curl matrix used for the plane wave
+  // incident field correction (ω-independent, assembled once).
+  std::unique_ptr<Operator> farfield_curlcurl_op;
 
   mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                                            const mfem::ParMesh &mesh);
@@ -173,11 +179,13 @@ public:
   auto &GetLumpedPortOp() { return lumped_port_op; }
   auto &GetWavePortOp() { return wave_port_op; }
   auto &GetFloquetPortOp() { return floquet_port_op; }
+  auto &GetPlaneWaveOp() { return plane_wave_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
   auto &GetSurfaceConductivityOp() { return surf_sigma_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetFloquetPortOp() const { return floquet_port_op; }
+  const auto &GetPlaneWaveOp() const { return plane_wave_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
   const auto &GetRationalImpedanceOp() const { return surf_rz_op; }
   const auto &GetSurfaceConductivityOp() const { return surf_sigma_op; }

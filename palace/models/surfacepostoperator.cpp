@@ -10,6 +10,7 @@
 #include "fem/integrator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/planewaveoperator.hpp"
 #include "models/strattonchu.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -41,6 +42,90 @@ void RequireCeedSurfaceFunctional(const SurfaceFunctional *func, const std::stri
 {
   MFEM_VERIFY(func && func->IsValid(), "libCEED postprocessing was expected for " + what +
                                            ", but SurfaceFunctional could not assemble!");
+}
+
+// Computes the contribution of the analytic incident plane wave to the Stratton-Chu
+// far-field integrands, mirroring AddStrattonChuIntegrandAtElement with E -> E_inc and
+// Z H -> k̂ × E_inc.
+void AddStrattonChuIncidentIntegrandAtElement(
+    const PlaneWaveData &incident, std::complex<double> omega,
+    const std::vector<std::array<double, 3>> &r_naughts, const mfem::ParMesh &mesh,
+    mfem::ElementTransformation &T, const mfem::IntegrationRule &ir,
+    std::vector<std::array<double, 3>> &integrand_r,
+    std::vector<std::array<double, 3>> &integrand_i)
+{
+  const double omega_re = omega.real();
+  const double omega_im = omega.imag();
+  mfem::Vector r_phys(3), normal(3);
+  for (int j = 0; j < ir.GetNPoints(); j++)
+  {
+    const mfem::IntegrationPoint &ip = ir.IntPoint(j);
+    T.SetIntPoint(&ip);
+
+    mfem::FaceElementTransformations FET;
+    mfem::IsoparametricTransformation T1, T2;
+    const bool invert = BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
+        T.ElementNo, mesh, FET, T1, T2, &ip);
+    MFEM_VERIFY(!FET.Elem2,
+                "FarField computations are only supported on external boundaries.")
+    T.Transform(ip, r_phys);
+
+    std::complex<double> E[3];
+    incident.GetElectricField(r_phys, omega_re, T.Attribute, E);
+
+    // Z H_inc = k̂ × E_inc for a plane wave in a homogeneous medium.
+    std::complex<double> ZH[3];
+    ZH[0] = incident.direction(1) * E[2] - incident.direction(2) * E[1];
+    ZH[1] = incident.direction(2) * E[0] - incident.direction(0) * E[2];
+    ZH[2] = incident.direction(0) * E[1] - incident.direction(1) * E[0];
+
+    BdrGridFunctionCoefficient::GetNormal(T, normal, invert);
+    std::complex<double> n_cross_E[3], n_cross_ZH[3];
+    for (int d = 0; d < 3; d++)
+    {
+      const int d1 = (d + 1) % 3, d2 = (d + 2) % 3;
+      n_cross_E[d] = normal(d1) * E[d2] - normal(d2) * E[d1];
+      n_cross_ZH[d] = normal(d1) * ZH[d2] - normal(d2) * ZH[d1];
+    }
+
+    const double wave_speed =
+        (T.Attribute > 0 && T.Attribute <= incident.attr_c.Size())
+            ? incident.attr_c[T.Attribute - 1]
+            : 1.0;
+    const double k_re = omega_re / wave_speed;
+    const double k_im = omega_im / wave_speed;
+    const double quadrature_weight = ip.weight * T.Weight();
+    const double prefactor_re = -quadrature_weight * k_im / (4 * M_PI);
+    const double prefactor_im = quadrature_weight * k_re / (4 * M_PI);
+
+    for (std::size_t i = 0; i < r_naughts.size(); i++)
+    {
+      const auto &r = r_naughts[i];
+      const double dot_product =
+          r[0] * r_phys(0) + r[1] * r_phys(1) + r[2] * r_phys(2);
+      const double amplitude = std::exp(-k_im * dot_product);
+      const double phase_re = k_re * dot_product;
+      const double cos_phase = std::cos(phase_re);
+      const double sin_phase = std::sin(phase_re);
+      const double w_real =
+          amplitude * (prefactor_re * cos_phase - prefactor_im * sin_phase);
+      const double w_imag =
+          amplitude * (prefactor_re * sin_phase + prefactor_im * cos_phase);
+
+      // r₀ × (n̂ × ZH).
+      std::complex<double> cr[3];
+      cr[0] = r[1] * n_cross_ZH[2] - r[2] * n_cross_ZH[1];
+      cr[1] = r[2] * n_cross_ZH[0] - r[0] * n_cross_ZH[2];
+      cr[2] = r[0] * n_cross_ZH[1] - r[1] * n_cross_ZH[0];
+
+      for (int d = 0; d < 3; d++)
+      {
+        const std::complex<double> A = n_cross_E[d] - cr[d];
+        integrand_r[i][d] += A.real() * w_real - A.imag() * w_imag;
+        integrand_i[i][d] += A.real() * w_imag + A.imag() * w_real;
+      }
+    }
+  }
 }
 
 template <typename T>
@@ -210,7 +295,7 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
 SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &data,
                                                 const mfem::ParMesh &mesh,
                                                 const mfem::Array<int> &bdr_attr_marker)
-  : thetaphis(data.thetaphis)
+  : thetaphis(data.thetaphis), scattered(data.scattered), monostatic(data.monostatic)
 {
   // Store boundary attributes for this postprocessing boundary.
   attr_list = SetUpBoundaryProperties(data, bdr_attr_marker);
@@ -421,7 +506,7 @@ SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
 
 std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFieldrE(
     const std::vector<std::pair<double, double>> &theta_phi_pairs, const GridFunction &E,
-    const GridFunction &B, std::complex<double> omega) const
+    const GridFunction &B, std::complex<double> omega, const PlaneWaveData *incident) const
 {
   if (theta_phi_pairs.empty())
     return {};
@@ -442,6 +527,45 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, farfield.attr_list);
 
+  // Subtract the incident plane wave contribution from the total far field. The
+  // Stratton-Chu transformation is linear, so evaluate the analytic incident field
+  // integral on the same surface and subtract it to obtain the scattered far field.
+  auto SubtractIncident =
+      [&](std::vector<std::array<std::complex<double>, 3>> result)
+  {
+    std::vector<std::array<double, 3>> inc_r(theta_phi_pairs.size());
+    std::vector<std::array<double, 3>> inc_i(theta_phi_pairs.size());
+    for (int i = 0; i < mesh.GetNBE(); i++)
+    {
+      if (!attr_marker[mesh.GetBdrAttribute(i) - 1])
+      {
+        continue;
+      }
+      auto *T = const_cast<mfem::ParMesh &>(mesh).GetBdrElementTransformation(i);
+      const auto *fe = nd_fespace.GetBE(i);
+      const auto *ir =
+          &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
+      AddStrattonChuIncidentIntegrandAtElement(*incident, omega, r_naughts, mesh, *T, *ir,
+                                               inc_r, inc_i);
+    }
+    double *data_r_ptr = inc_r.data()->data();
+    double *data_i_ptr = inc_i.data()->data();
+    std::size_t total_elements = inc_r.size() * 3;
+    Mpi::GlobalSum(total_elements, data_i_ptr, E.GetComm());
+    Mpi::GlobalSum(total_elements, data_r_ptr, E.GetComm());
+    std::array<double, 3> tmp_r, tmp_i;
+    for (std::size_t k = 0; k < theta_phi_pairs.size(); k++)
+    {
+      linalg::Cross3(r_naughts[k], inc_r[k], tmp_r);
+      linalg::Cross3(r_naughts[k], inc_i[k], tmp_i);
+      for (std::size_t d = 0; d < 3; d++)
+      {
+        result[k][d] -= std::complex<double>{tmp_r[d], tmp_i[d]};
+      }
+    }
+    return result;
+  };
+
   // Use the libCEED surface functional path when supported, avoiding per-point host
   // coefficient evaluation in the MFEM path. Observation directions are part of the
   // assembled operator and must therefore invalidate the cached functional when changed.
@@ -454,7 +578,8 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   }
   if (use_ceed && farfield_func && farfield_func->IsValid())
   {
-    return farfield_func->EvalFarField(E, B, omega);
+    auto result = farfield_func->EvalFarField(E, B, omega);
+    return incident ? SubtractIncident(std::move(result)) : result;
   }
   if (use_ceed)
   {
@@ -501,7 +626,7 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
       result[k][d] = std::complex<double>{tmp_r[d], tmp_i[d]};
     }
   }
-  return result;
+  return incident ? SubtractIncident(std::move(result)) : result;
 }
 
 }  // namespace palace

@@ -104,6 +104,14 @@ struct Measurement
 
     // Components of the electric field.
     std::vector<std::array<std::complex<double>, 3>> E_field;
+
+    // Incident plane wave amplitude used for RCS normalization (nondimensional).
+    double E_inc = 0.0;
+
+    // Monostatic backscatter directions and scattered far fields, evaluated per excited
+    // plane wave when requested.
+    std::vector<std::pair<double, double>> monostatic_thetaphis;
+    std::vector<std::array<std::complex<double>, 3>> monostatic_E_field;
   };
 
   // Data for both lumped and wave port.
@@ -383,6 +391,15 @@ protected:
   template <ProblemType U = solver_t>
   auto PrintFarFieldE(const SurfacePostOperator &surf_post_op)
       -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void>;
+
+  // Driven: scattered far-field RCS (bistatic and monostatic).
+  std::optional<TableWithCSVFile> farfield_rcs;
+  template <ProblemType U = solver_t>
+  auto InitializeFarFieldRCS(const PostOperator<solver_t> &post_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  template <ProblemType U = solver_t>
+  auto PrintFarFieldRCS(const PostOperator<solver_t> &post_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
   // Eigenmode.
   std::optional<TableWithCSVFile> eig;

@@ -379,6 +379,34 @@ public:
   FarfieldBoundaryData(const json &absorbing);
 };
 
+struct PlaneWaveData
+{
+public:
+  // Propagation direction (unit vector) and electric field polarization direction (unit
+  // vector, orthogonal to Direction).
+  std::array<double, 3> direction = {0.0, 0.0, 1.0};
+  std::array<double, 3> polarization = {1.0, 0.0, 0.0};
+
+  // Incident electric field amplitude [V/m] and phase [rad].
+  double amplitude = 1.0;
+  double phase = 0.0;
+
+  // Reference point defining the zero of the incident wave phase, in mesh length units.
+  std::array<double, 3> origin = {0.0, 0.0, 0.0};
+
+  // List of boundary attributes with absorbing (farfield) boundary conditions where the
+  // incident plane wave enters the computational domain.
+  std::vector<int> attributes = {};
+
+  // Excitation index.
+  int excitation = 0;
+
+  [[nodiscard]] auto empty() const { return attributes.empty(); }
+
+  PlaneWaveData() = default;
+  PlaneWaveData(const json &wave);
+};
+
 struct ConductivityData
 {
 public:
@@ -761,6 +789,14 @@ public:
   // Units are radians.
   std::vector<std::pair<double, double>> thetaphis = {};
 
+  // Subtract the incident plane wave contribution from the total field so that the
+  // far-field output is the scattered field, and write an RCS table.
+  bool scattered = false;
+
+  // For each excited plane wave, additionally evaluate the scattered far field in the
+  // backscatter direction (monostatic RCS).
+  bool monostatic = false;
+
   FarFieldPostData() = default;
   FarFieldPostData(const json &farfield);
 
@@ -821,6 +857,7 @@ public:
   PmcBoundaryData pmc = {};
   WavePortPecBoundaryData auxpec = {};
   FarfieldBoundaryData farfield = {};
+  std::map<int, PlaneWaveData> planewave = {};
   std::vector<ConductivityData> conductivity = {};
   std::vector<ImpedanceData> impedance = {};
   std::vector<RationalImpedanceData> rational_impedance = {};
@@ -1251,6 +1288,7 @@ void Nondimensionalize(const Units &units, ImpedanceData &data);
 void Nondimensionalize(const Units &units, SuperconductorData &data);
 void Nondimensionalize(const Units &units, LumpedPortData &data);
 void Nondimensionalize(const Units &units, PeriodicBoundaryData &data);
+void Nondimensionalize(const Units &units, PlaneWaveData &data);
 void Nondimensionalize(const Units &units, WavePortData &data);
 void Nondimensionalize(const Units &units, SurfaceFluxData &data);
 void Nondimensionalize(const Units &units, InterfaceDielectricData &data);

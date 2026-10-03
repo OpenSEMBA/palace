@@ -64,9 +64,10 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                  GetH1Space()),
     floquet_port_op(boundaries.floquetport, boundaries.periodic, problem_type, units,
                     mat_op, GetNDSpace().Get()),
+    plane_wave_op(boundaries.planewave, mat_op, *mesh.back()),
     surf_j_op(boundaries.current, *mesh.back()),
-    port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, surf_j_op,
-                           current_dipole_op)
+    port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, plane_wave_op,
+                           surf_j_op, current_dipole_op)
 {
   // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.
   // Must use INTEGRAL map type so the discrete interpolator recognizes this as the curl
@@ -1622,34 +1623,116 @@ bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omeg
   wave_port_op.AddExcitationBdrCoefficients(excitation_idx, omega, fbr, fbi);
   int empty = (fbr.empty() && fbi.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
-  if (empty)
+  if (!empty)
   {
-    return nnz_floquet;
+    // Restrict the boundary assembly to the excited wave port boundary elements (the
+    // coefficients vanish elsewhere).
+    mfem::Array<int> marker = wave_port_op.GetExcitationBdrMarker(excitation_idx);
+    MFEM_VERIFY(marker.Size() > 0,
+                "No excited wave port found for excitation index " << excitation_idx
+                                                                   << "!");
+    {
+      mfem::LinearForm rhs2(&GetNDSpace().Get());
+      rhs2.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr), marker);
+      rhs2.UseFastAssembly(false);
+      rhs2.UseDevice(false);
+      rhs2.Assemble();
+      rhs2.UseDevice(true);
+      GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs2, RHS2.Real());
+    }
+    {
+      mfem::LinearForm rhs2(&GetNDSpace().Get());
+      rhs2.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi), marker);
+      rhs2.UseFastAssembly(false);
+      rhs2.UseDevice(false);
+      rhs2.Assemble();
+      rhs2.UseDevice(true);
+      GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs2, RHS2.Imag());
+    }
   }
-  // Restrict the boundary assembly to the excited wave port boundary elements (the
-  // coefficients vanish elsewhere).
-  mfem::Array<int> marker = wave_port_op.GetExcitationBdrMarker(excitation_idx);
-  MFEM_VERIFY(marker.Size() > 0,
-              "No excited wave port found for excitation index " << excitation_idx << "!");
+
+  // Incident plane wave excitation: non-homogeneous absorbing boundary contribution
+  // RHS += iω ∫ (1/Z) E_inc · v dS. The corresponding left-hand side term is iω C_b, so
+  // with b = b_r + i b_i we add -ω b_i to the real part and +ω b_r to the imaginary part.
+  bool nnz_planewave = false;
+  if (!plane_wave_op.Empty())
   {
-    mfem::LinearForm rhs2(&GetNDSpace().Get());
-    rhs2.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr), marker);
-    rhs2.UseFastAssembly(false);
-    rhs2.UseDevice(false);
-    rhs2.Assemble();
-    rhs2.UseDevice(true);
-    GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs2, RHS2.Real());
+    SumVectorCoefficient pbr(GetMesh().SpaceDimension()),
+        pbi(GetMesh().SpaceDimension());
+    plane_wave_op.AddExcitationBdrCoefficients(excitation_idx, omega, pbr, pbi);
+    int empty_pw = (pbr.empty() && pbi.empty());
+    Mpi::GlobalMin(1, &empty_pw, GetComm());
+    if (!empty_pw)
+    {
+      mfem::Array<int> marker = plane_wave_op.GetExcitationBdrMarker(excitation_idx);
+      MFEM_VERIFY(marker.Size() > 0,
+                  "No excited plane wave found for excitation index "
+                      << excitation_idx << "!");
+      auto AssembleBdr = [&](SumVectorCoefficient &coeff, mfem::Vector &out)
+      {
+        mfem::LinearForm rhs(&GetNDSpace().Get());
+        rhs.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff), marker);
+        rhs.UseFastAssembly(false);
+        rhs.UseDevice(false);
+        rhs.Assemble();
+        rhs.UseDevice(true);
+        GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, out);
+      };
+      mfem::Vector br(GetNDSpace().GetTrueVSize()), bi(GetNDSpace().GetTrueVSize());
+      br.UseDevice(true);
+      bi.UseDevice(true);
+      br = 0.0;
+      bi = 0.0;
+      AssembleBdr(pbr, br);
+      AssembleBdr(pbi, bi);
+      RHS2.Real().Add(-omega, bi);
+      RHS2.Imag().Add(omega, br);
+      nnz_planewave = true;
+    }
   }
+
+  // Second-order absorbing boundary correction: RHS += i(0.5/ω) M_ff(E_inc, ·), with M_ff
+  // the boundary curl-curl matrix already used in the system matrix A2. The incident field
+  // is projected onto the ND space and the cached matrix applied.
+  bool nnz_planewave2 = false;
+  if (farfield_op.GetOrder() > 1 && !plane_wave_op.Empty())
   {
-    mfem::LinearForm rhs2(&GetNDSpace().Get());
-    rhs2.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi), marker);
-    rhs2.UseFastAssembly(false);
-    rhs2.UseDevice(false);
-    rhs2.Assemble();
-    rhs2.UseDevice(true);
-    GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs2, RHS2.Imag());
+    SumVectorCoefficient pfr(GetMesh().SpaceDimension()),
+        pfi(GetMesh().SpaceDimension());
+    plane_wave_op.AddFieldCoefficients(excitation_idx, omega, pfr, pfi);
+    int empty2 = (pfr.empty() && pfi.empty());
+    Mpi::GlobalMin(1, &empty2, GetComm());
+    if (!empty2)
+    {
+      if (!farfield_curlcurl_op)
+      {
+        farfield_curlcurl_op =
+            GetFarfieldBoundaryCurlCurlMatrix<Operator>(Operator::DIAG_ZERO);
+      }
+      MFEM_VERIFY(farfield_curlcurl_op,
+                  "Missing second-order farfield boundary curl-curl matrix!");
+      mfem::ParGridFunction er(&GetNDSpace().Get()), ei(&GetNDSpace().Get());
+      er = 0.0;
+      ei = 0.0;
+      er.ProjectCoefficient(pfr);
+      ei.ProjectCoefficient(pfi);
+      mfem::Vector ert(GetNDSpace().GetTrueVSize()), eit(GetNDSpace().GetTrueVSize());
+      ert.UseDevice(true);
+      eit.UseDevice(true);
+      GetNDSpace().GetRestrictionMatrix()->Mult(er, ert);
+      GetNDSpace().GetRestrictionMatrix()->Mult(ei, eit);
+      mfem::Vector lr(GetNDSpace().GetTrueVSize()), li(GetNDSpace().GetTrueVSize());
+      lr.UseDevice(true);
+      li.UseDevice(true);
+      farfield_curlcurl_op->Mult(ert, lr);
+      farfield_curlcurl_op->Mult(eit, li);
+      // i(0.5/ω)(Lr + i Li) = -(0.5/ω) Li + i(0.5/ω) Lr.
+      RHS2.Real().Add(-0.5 / omega, li);
+      RHS2.Imag().Add(0.5 / omega, lr);
+      nnz_planewave2 = true;
+    }
   }
-  return true;
+  return nnz_floquet || nnz_planewave || nnz_planewave2 || !empty;
 }
 
 void SpaceOperator::GetConstantInitialVector(ComplexVector &v)

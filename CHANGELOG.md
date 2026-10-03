@@ -19,6 +19,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added incident plane wave excitation for frequency-domain driven simulations. A
+    `Boundaries.PlaneWave` source injects a plane wave through absorbing boundaries by
+    enforcing the radiation condition on the scattered field, and
+    `Boundaries.Postprocessing.FarField` gains `Scattered` (incident-field subtraction,
+    scattered `farfield-rE.csv` and `farfield-rcs.csv` output) and `Monostatic`
+    (backscatter RCS per excited plane wave) options.
   - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
     `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
     `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly

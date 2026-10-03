@@ -131,6 +131,13 @@ Measurement Measurement::Dimensionalize(const Units &units,
   // The far field r E_∞ is a field times a distance, i.e. a voltage.
   measurement_cache.farfield.E_field = units.Dimensionalize<Units::ValueType::VOLTAGE>(
       nondim_measurement_cache.farfield.E_field);
+  measurement_cache.farfield.E_inc = units.Dimensionalize<Units::ValueType::FIELD_E>(
+      nondim_measurement_cache.farfield.E_inc);
+  measurement_cache.farfield.monostatic_thetaphis =
+      nondim_measurement_cache.farfield.monostatic_thetaphis;  // NONE
+  measurement_cache.farfield.monostatic_E_field =
+      units.Dimensionalize<Units::ValueType::VOLTAGE>(
+          nondim_measurement_cache.farfield.monostatic_E_field);
 
   // Mode analysis data: stored nondimensional, dimensionalize here.
   measurement_cache.mode_data = nondim_measurement_cache.mode_data;
@@ -273,6 +280,14 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   measurement_cache.farfield.thetaphis = dim_measurement_cache.farfield.thetaphis;  // NONE
   measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::VOLTAGE>(
       dim_measurement_cache.farfield.E_field);
+  measurement_cache.farfield.E_inc =
+      units.Nondimensionalize<Units::ValueType::FIELD_E>(
+          dim_measurement_cache.farfield.E_inc);
+  measurement_cache.farfield.monostatic_thetaphis =
+      dim_measurement_cache.farfield.monostatic_thetaphis;  // NONE
+  measurement_cache.farfield.monostatic_E_field =
+      units.Nondimensionalize<Units::ValueType::VOLTAGE>(
+          dim_measurement_cache.farfield.monostatic_E_field);
 
   // Mode analysis data is already in SI units (computed dimensional).
   measurement_cache.mode_data = dim_measurement_cache.mode_data;  // NONE
@@ -799,6 +814,74 @@ auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
     }
   }
   WriteTable(*farfield_E);
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializeFarFieldRCS(const PostOperator<solver_t> &post_op)
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  const auto &surf_post_op = post_op.surf_post_op;
+  if (!surf_post_op.farfield.scattered || post_op.fem_op->GetPlaneWaveOp().Empty() ||
+      (!(surf_post_op.farfield.size() > 0) && !surf_post_op.farfield.monostatic))
+  {
+    return;
+  }
+
+  farfield_rcs = TableWithCSVFile(post_dir / "farfield-rcs.csv", reload_table);
+
+  Table t;  // Define table locally first due to potential reload.
+
+  const int nr_expected_measurement_rows = static_cast<int>(
+      (surf_post_op.farfield.size() + (surf_post_op.farfield.monostatic ? 1 : 0)) *
+      ex_idx_v_all.size());
+  t.reserve(nr_expected_measurement_rows, 6);
+  t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
+  {
+    Column ex_col("exc", "exc", 0, PrecIndexCol(solver_t), {}, "");
+    ex_col.print_as_int = true;
+    t.insert(std::move(ex_col));
+  }
+  t.insert(Column("theta", "theta (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
+  t.insert(Column("phi", "phi (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
+  t.insert("rcs", "RCS (m^2)");
+  t.insert("rcs_db", "RCS (dBsm)");
+
+  MoveTableValidateReload(*farfield_rcs, std::move(t));
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintFarFieldRCS(const PostOperator<solver_t> &post_op)
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  if (!farfield_rcs)
+  {
+    return;
+  }
+  const double E_inc = measurement_cache.farfield.E_inc;
+  auto PrintRows =
+      [&](const std::vector<std::pair<double, double>> &angles,
+          const std::vector<std::array<std::complex<double>, 3>> &E_field)
+  {
+    for (std::size_t i = 0; i < angles.size(); i++)
+    {
+      const double mag2 = std::norm(E_field[i][0]) + std::norm(E_field[i][1]) +
+                          std::norm(E_field[i][2]);
+      const double rcs = (E_inc > 0.0) ? 4.0 * M_PI * mag2 / (E_inc * E_inc) : 0.0;
+      const double rcs_db = (rcs > 0.0) ? 10.0 * std::log10(rcs) : -999.0;
+      farfield_rcs->table["idx"] << row_idx_v;
+      farfield_rcs->table["exc"] << static_cast<double>(m_ex_idx);
+      farfield_rcs->table["theta"] << 180 / M_PI * angles[i].first;
+      farfield_rcs->table["phi"] << 180 / M_PI * angles[i].second;
+      farfield_rcs->table["rcs"] << rcs;
+      farfield_rcs->table["rcs_db"] << rcs_db;
+    }
+  };
+  PrintRows(measurement_cache.farfield.thetaphis, measurement_cache.farfield.E_field);
+  PrintRows(measurement_cache.farfield.monostatic_thetaphis,
+            measurement_cache.farfield.monostatic_E_field);
+  WriteTable(*farfield_rcs);
 }
 
 template <ProblemType solver_t>
@@ -1753,6 +1836,10 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   {
     InitializeFarFieldE(post_op.surf_post_op);
   }
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    InitializeFarFieldRCS(post_op);
+  }
   if constexpr (solver_t == ProblemType::EIGENMODE)
   {
     InitializeEig();
@@ -1832,6 +1919,10 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
   {
     PrintFarFieldE(post_op.surf_post_op);
+  }
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    PrintFarFieldRCS(post_op);
   }
   if constexpr (solver_t == ProblemType::EIGENMODE)
   {

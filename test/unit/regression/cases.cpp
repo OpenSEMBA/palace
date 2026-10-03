@@ -1294,6 +1294,19 @@ TEST_CASE("antenna_halfwave_dipole_surfacecurrent", "[Serial][Parallel][GPU][Reg
                                   "antenna_halfwave_dipole_surfacecurrent", opts);
 }
 
+// --- plane wave excitation + scattered far-field RCS of a PEC sphere ---
+
+TEST_CASE("planewave_sphere", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-12;
+  opts.paraview_fields = false;
+  opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
+  palace::test::RunRegressionCase("planewave_sphere", "planewave_sphere.json",
+                                  "planewave_sphere", opts);
+}
+
 // --- coaxial + cpw non-adaptive + cpw eigen: reltol still 2e-2 (from  ---
 // --- antenna block), abstol drops to 1e-11 before the coaxial block.  ---
 
