@@ -1,0 +1,10 @@
+# Python dependencies for the RCS validation tools and jupytext notebooks.
+numpy
+scipy
+matplotlib
+gmsh
+vtk
+jupytext
+# meshio is used only for standard VTK interchange files; Palace writes VTK XML
+# 2.2, which the `vtk` package reads (meshio does not).
+meshio

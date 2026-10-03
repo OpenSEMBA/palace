@@ -2,15 +2,59 @@
 """Mie series for a PEC sphere, following Ruck et al., Radar Cross Section Handbook.
 
 Convention: exp(j*omega*t) time dependence, outgoing Green's function exp(-j*k*r),
-incident plane wave propagating along +z with the electric field along +x.
+incident plane wave propagating along -z (so backscatter is theta=0 and forward
+scattering is theta=pi), with the electric field along x.
 Returns (es_theta, es_phi) whose squared magnitudes are the RCS in m^2.
 """
 import numpy as np
 from scipy.special import spherical_jn, spherical_yn
 
+C0 = 299792458.0
+
+
+def mie_coefficients(x, nmax=None):
+    """Return the Mie coefficients A_n and B_n for a PEC sphere at size parameter x=ka."""
+    if nmax is None:
+        nmax = int(np.ceil(x + 4.0 * x ** (1.0 / 3.0) + 10.0))
+    n = np.arange(1, nmax + 1)
+    psi1 = x * spherical_jn(n, x)
+    xi1 = x * (spherical_jn(n, x) - 1j * spherical_yn(n, x))
+    psi2 = x * spherical_jn(n - 1, x)
+    xi2 = x * (spherical_jn(n - 1, x) - 1j * spherical_yn(n - 1, x))
+    A = -((-1j) ** n) * psi1 / xi1 * (2 * n + 1) / (n * (n + 1))
+    B = ((-1j) ** (n + 1)) * (x * psi2 - n * psi1) / (x * xi2 - n * xi1) \
+        * (2 * n + 1) / (n * (n + 1))
+    return A, B
+
+
+def monostatic_normalized(ka):
+    """Monostatic RCS of a PEC sphere normalized by the projected area, sigma/(pi a^2).
+
+    `ka` is the size parameter = circumference / wavelength. Vectorized over `ka`.
+    Uses the theta = 0 (backscatter) special case of the Mie series; the incident
+    wave propagates along -z in this convention.
+    """
+    ka = np.atleast_1d(np.asarray(ka, dtype=float))
+    out = np.empty_like(ka)
+    for i, x in enumerate(ka):
+        if x <= 0.0:
+            out[i] = 0.0
+            continue
+        A, B = mie_coefficients(x)
+        n = np.arange(1, A.size + 1)
+        val = ((-1j) ** (n - 1)) * (n * (n + 1) / 2.0) * (A + 1j * B)
+        S1 = np.sum(val)
+        # |es|^2 = 4*pi/k^2 |S1|^2 and k = ka/a, so sigma/(pi a^2) = 4 |S1|^2/(ka)^2.
+        out[i] = 4.0 * abs(S1) ** 2 / x ** 2
+    return out
+
+
+def monostatic_normalized_db(ka):
+    return 10.0 * np.log10(np.maximum(monostatic_normalized(ka), 1.0e-300))
+
 
 def mie_pec(radius, frequency, theta, phi, nmax=None):
-    c = 299792458.0
+    c = C0
     k = 2.0 * np.pi * frequency / c
     x = k * radius
     if nmax is None:

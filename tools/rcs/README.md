@@ -1,58 +1,88 @@
 # RCS validation tools
 
-Python helpers for validating Palace plane wave excitation and scattered
-far-field / RCS output. These are research and validation scripts; they are not
-part of the Palace build or the CI test suite.
+Python helpers for validating Palace plane wave excitation, scattered far-field
+output, and ParaView-compatible field visualization. These are research and
+validation scripts; they are not part of the Palace build or the CI test suite.
 
 ## Files
 
-- `sphere_mesh.py` — generate a PEC sphere inside a box (or larger sphere) with
-  Gmsh. The inner surface is physical tag 2 (PEC) and the outer boundary is
-  physical tag 1 (absorbing).
+- `sphere_mesh.py` — generate a PEC sphere inside a spherical outer boundary
+  with Gmsh. The inner surface is physical tag 2 (PEC) and the outer boundary is
+  physical tag 1 (absorbing). A spherical boundary keeps the incident wave
+  close to normal incidence, minimizing absorbing-boundary reflection.
+- `almond_mesh.py` — generate the EMCC/NASA almond benchmark geometry (length
+  9.936 in) inside a spherical boundary. The cross sections are ellipses with a
+  3:1 width-to-thickness ratio; the sharp tips are truncated by 0.5 mm and
+  capped conformally so the volume mesh is valid for MFEM.
 - `mie_pec.py` — Mie series for a PEC sphere following Ruck et al., *Radar Cross
-  Section Handbook*. Time convention `exp(j*omega*t)`, incident wave along +z
-  with the electric field along +x, matching Palace's `Direction`/`Polarization`
-  convention.
+  Section Handbook*. Time convention `exp(j*omega*t)`, incident wave along `-z`
+  (backscatter at `theta = 0`), electric field along `x`. Also provides
+  `monostatic_normalized(ka)` for the classic normalized monostatic RCS curve.
 - `compare_rcs.py` — compare a Palace `farfield-rcs.csv` against `mie_pec.py`.
-- `almond_mesh.py` — generate the EMCC/NASA almond benchmark geometry with
-  Gmsh. The geometry equations and dimensions are verified (length 9.936 in,
-  width 3.84 in, thickness 1.28 in), but the volume mesh quality at the sharp
-  tips is not yet sufficient for MFEM; use a published benchmark mesh for
-  quantitative almond studies until the tips are capped conformally.
+- `vtu_scattered.py` — subtract the analytic incident plane wave from a Palace
+  ParaView field (`E_real`/`E_imag`) and write a single-file VTU with
+  `E_scat_real`, `E_scat_imag`, `E_total_mag`, `E_scat_mag`. Uses the `vtk`
+  package because Palace writes VTK XML version 2.2 (meshio cannot read it).
+  Accepts a `.vtu`, `.pvtu`, or `.pvd`.
+- `pattern_vtp.py` — convert `farfield-rcs.csv` into a dB-scaled 3D point-cloud
+  pattern (`.vtp`) for ParaView, with `RCS`, `RCS_dB` and `radius` scalars.
+- `render_paraview.py` — offscreen ParaView renderer for slices/patterns
+  (`pvbatch3.12`), when a working ParaView Python environment is available.
+- `notebooks/sphere_rcs_study.py` — jupytext notebook: monostatic Mie figure,
+  bistatic 1 m PEC sphere at 300 MHz (Palace vs Mie), ParaView exports.
+- `notebooks/almond_rcs_study.py` — jupytext notebook: almond resolution study
+  at 1.19 GHz and reference comparison.
+
+## Dependencies
+
+```sh
+python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
+```
 
 ## Example: PEC sphere
 
 ```sh
-python3 sphere_mesh.py sphere.msh 0.159154943 0.6 0.018 0.07
+python3 sphere_mesh.py sphere.msh 1.0 2.2 0.028 0.09
 palace sphere.json
 python3 compare_rcs.py postpro/sphere/farfield-rcs.csv
 ```
 
-A reference `sphere.json` uses `Boundaries.PlaneWave` with
-`Direction = [0, 0, 1]`, `Polarization = [1, 0, 0]`, and
-`Postprocessing.FarField` with `Scattered` and `Monostatic` enabled. For a
-well-resolved mesh the bistatic pattern agrees with Mie to better than ~1 dB at
-most angles (the forward direction agrees to <0.1 dB); deep co-polarized nulls
-show larger relative errors and are limited by the absorbing boundary
-reflection.
+A `sphere.json` uses `Boundaries.PlaneWave` with `Direction = [0, 0, -1]`,
+`Polarization = [1, 0, 0]` (matching the Mie convention: monostatic at
+`theta = 0`), and `Postprocessing.FarField` with `Scattered` and `Monostatic`
+enabled. With a well-resolved mesh (`h ~ lambda/30`) the main bistatic features
+agree with Mie to about 1 dB; deep nulls and the forward peak are limited by the
+absorbing-boundary reflection and require a PML for higher accuracy.
 
 ## NASA almond benchmark
 
 The benchmark (Woo et al., *IEEE Antennas Propagat. Mag.* 35(1), 1993) is a PEC
 almond of length 9.936 in with monostatic RCS at 1.19, 7, and 9.92 GHz for
-horizontal (HH) and vertical (VV) polarization, azimuth 0-180 degrees. The
-reference data are the published measurement curves, or the CC-BY-SA-4.0 Austin
-RCS Benchmark Suite (`UTAustinCEMGroup/AustinCEMBenchmarks`, Problem Set IIIA).
-Use one `PlaneWave` excitation per azimuth and polarization with
+horizontal (HH) and vertical (VV) polarization, azimuth 0-180 degrees. Use one
+`PlaneWave` excitation per azimuth and polarization with
 `Postprocessing.FarField.Monostatic = true`; the backscatter RCS for each
 excitation is written to `farfield-rcs.csv`.
 
 Notes:
 
-- The sharp almond tips require local mesh refinement and a low-reflection
-  truncation boundary (second-order absorbing, or a PML when available) placed
-  sufficiently far from the target; the truncation error dominates the
-  low-RCS tip-on directions.
+- Digitize the Woo 1.19 GHz VV/HH curves (or use the CC-BY-SA-4.0 Austin RCS
+  Benchmark Suite, `UTAustinCEMGroup/AustinCEMBenchmarks`, Problem Set IIIA) for
+  the reference CSV.
+- The sharp almond tips require local refinement and a low-reflection truncation
+  boundary placed sufficiently far from the target; the truncation error
+  dominates the low-RCS tip-on directions.
 - Monostatic sweeps are naturally parallelized as multiple plane wave
   excitations in a single run, which reuses the system matrix across
   right-hand sides.
+
+## Figures
+
+`figures/` contains reference images generated by the notebooks:
+
+- `sphere_monostatic_mie.png` — monostatic `sigma/(pi a^2)` vs `ka` (the classic
+  Mie theory figure, with Rayleigh and optical asymptotes).
+- `sphere_bistatic_1m_300MHz_polar.png`, `..._db.png` — bistatic patterns of a
+  1 m PEC sphere at 300 MHz, Palace vs Mie.
+- `sphere_rcs_pattern_3d.png` — 3D dB-scaled RCS pattern (Mie, full sphere).
+- `almond_monostatic_convergence.png` — almond resolution study (generated by
+  the almond notebook once the runs exist).
