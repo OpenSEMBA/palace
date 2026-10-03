@@ -154,7 +154,8 @@ A plane wave is configured under `"Boundaries"`:
     incident wave enters the domain.
   - `"Direction"` is the propagation direction `k̂` (normalized internally), and
     `"Polarization"` is the electric field direction, which must be orthogonal
-    to `"Direction"`.
+    to `"Direction"`. The wave travels along `+k̂`, so the backscatter
+    (monostatic) direction is `-k̂`.
   - `"Amplitude"` is the incident electric field magnitude in V/m; the RCS is
     independent of this value for linear problems. `"Phase"` (radians) and
     `"ReferencePoint"` (mesh length units) optionally define the phase

@@ -16,6 +16,9 @@ a = float(sys.argv[2]) if len(sys.argv) > 2 else 0.159154943
 R = float(sys.argv[3]) if len(sys.argv) > 3 else 0.6
 hmin = float(sys.argv[4]) if len(sys.argv) > 4 else 0.035
 hmax = float(sys.argv[5]) if len(sys.argv) > 5 else 0.15
+# Distance over which the mesh coarsens from hmin at the sphere to hmax. Keep
+# it modest so the fine region does not fill the whole domain.
+dist_max = float(sys.argv[6]) if len(sys.argv) > 6 else max(0.3, min(R - a, 2.0 * a))
 
 gmsh.initialize()
 gmsh.model.add("sphere")

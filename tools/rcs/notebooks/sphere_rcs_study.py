@@ -98,7 +98,7 @@ phis = [0.0, 90.0]
 # Mie reference.
 mie = {}
 for phi in phis:
-    et, ep = mie_pec(RADIUS, FREQ, np.radians(thetas), [np.radians(phi)])
+    et, ep = mie_pec(RADIUS, FREQ, np.pi - np.radians(thetas), [np.radians(phi)])
     mie[phi] = {"theta": np.abs(et) ** 2, "phi": np.abs(ep) ** 2}
 
 
@@ -113,7 +113,7 @@ def make_config(path):
             "PEC": {"Attributes": [2]},
             "Absorbing": {"Attributes": [1], "Order": 2},
             "PlaneWave": [{"Index": 1, "Attributes": [1], "Excitation": 1,
-                           "Direction": [0.0, 0.0, -1.0],
+                           "Direction": [0.0, 0.0, 1.0],
                            "Polarization": [1.0, 0.0, 0.0], "Amplitude": 1.0}],
             "Postprocessing": {"FarField": {"Attributes": [1], "ThetaPhis": tp,
                                             "Scattered": True}},

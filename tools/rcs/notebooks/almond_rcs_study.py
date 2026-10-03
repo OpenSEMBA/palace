@@ -138,7 +138,7 @@ for ax, pol in zip(axes, ("VV", "HH")):
     for case, res in results.items():
         if res is None:
             continue
-        ax.plot([r[0] for r in [AZIMUTHS]], [res[p][pol] for p in AZIMUTHS],
+        ax.plot(AZIMUTHS, [res[p][pol] for p in AZIMUTHS],
                 marker="o", label=f"Palace {case}")
     if REFERENCE_CSV.exists():
         ref = np.genfromtxt(REFERENCE_CSV, delimiter=",", names=True,

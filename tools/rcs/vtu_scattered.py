@@ -119,8 +119,11 @@ def main():
 
     add_vector(data, "E_scat_real", esc.real)
     add_vector(data, "E_scat_imag", esc.imag)
+    add_vector(data, "E_inc_real", einc.real)
+    add_vector(data, "E_inc_imag", einc.imag)
     add_scalar(data, "E_total_mag", np.linalg.norm(etot, axis=1))
     add_scalar(data, "E_scat_mag", np.linalg.norm(esc, axis=1))
+    add_scalar(data, "E_inc_mag", np.linalg.norm(einc, axis=1))
 
     writer = vtk.vtkXMLUnstructuredGridWriter()
     writer.SetFileName(args.output)
