@@ -108,16 +108,29 @@ def read_monostatic(case):
     path = WORKDIR / "postpro" / case / "farfield-rcs.csv"
     if not path.exists():
         return None
-    out = {}
     with open(path) as f:
         reader = csv.reader(f)
         header = [h.strip() for h in next(reader)]
-        ip = next(i for i, h in enumerate(header) if h.startswith("phi"))
-        idb = next(i for i, h in enumerate(header) if h.startswith("RCS (dBsm)"))
-        rows = [(float(r[ip]), float(r[idb])) for r in reader]
-    # Excitations are (VV, HH) pairs for each azimuth, in AZIMUTHS order.
-    for i, phi in enumerate(AZIMUTHS):
-        out[phi] = {"VV": rows[2 * i][1], "HH": rows[2 * i + 1][1]}
+        ie = header.index("exc")
+        it = header.index("theta (deg.)")
+        ip = header.index("phi (deg.)")
+        idb = header.index("RCS (dBsm)")
+        rows = [(int(r[ie]), float(r[it]), float(r[ip]), float(r[idb])) for r in reader]
+    # Excitations alternate VV, HH for each azimuth. The monostatic row is the
+    # backscatter direction opposite to Direction = (cos(az), sin(az), 0):
+    # theta = 90, phi = az + 180.
+    out = {}
+    for i, az in enumerate(AZIMUTHS):
+        back_phi = (az + 180.0) % 360.0
+        vv = hh = None
+        for exc, th, ph, db in rows:
+            dphi = abs((ph - back_phi + 180.0) % 360.0 - 180.0)
+            if abs(th - 90.0) < 1e-6 and dphi < 1e-6:
+                if exc == 2 * i + 1:
+                    vv = db
+                elif exc == 2 * i + 2:
+                    hh = db
+        out[az] = {"VV": vv, "HH": hh}
     return out
 
 
