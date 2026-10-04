@@ -70,8 +70,12 @@ def make_config(case, f_hz):
                                             "ThetaPhis": [[t, 0] for t in range(0, 181, 15)],
                                             "Scattered": True, "Monostatic": True}},
         },
-        "Solver": {"Order": 2, "Driven": {"Samples": [{"Type": "Point",
-                                                       "Freq": [f_hz / 1e9]}]}},
+        "Solver": {"Order": 2,
+                   # The scattered-field system needs more GMRES iterations than the
+                   # default 100 to reach 1e-6 at these problem sizes.
+                   "Linear": {"Type": "Default", "KSPType": "GMRES", "Tol": 1.0e-6,
+                              "MaxIts": 600, "InitialGuess": True},
+                   "Driven": {"Samples": [{"Type": "Point", "Freq": [f_hz / 1e9]}]}},
     }
     (WORKDIR / case / f"{case}.json").write_text(json.dumps(cfg, indent=1))
 

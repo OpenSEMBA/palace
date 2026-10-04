@@ -66,14 +66,28 @@ compared with the analytic bistatic pattern at 15-degree resolution:
 |---|---|---|---|---|
 | 0.5 | 23.9 | +0.06 | 0.15 | 0.32 |
 | 1.0 | 47.7 | +0.17 | 0.17 | 0.26 |
-| 2.0 | 95.4 | -0.05 | 0.25 | 0.49 |
+| 2.0 | 95.4 | +0.08 | 0.08 | 0.14 |
+| 3.0 | 143.1 | +0.22 | 0.18 | 0.36 |
 
-All results are well within the 2 dB validation target, including the deep-null
-directions that the total-field formulation could not resolve. The earlier
-total-field failures (several dB to tens of dB, frequency dependent) were caused
-by the absorbing boundary reflection of the strong incident wave; the
-scattered-field formulation keeps the incident wave off the absorbing boundary
-entirely, so only the (much weaker) scattered field interacts with it.
+All solves use `"MaxIts": 600` (`Tol 1e-6`) so that the fields are fully
+converged; the default 100 GMRES iterations are not sufficient for these
+problem sizes.
+
+Mesh convergence at `ka = 2` (same boundary and polynomial order, converged
+solves):
+
+| hmax | monostatic error (dB) | pattern RMS (dB) | pattern max (dB) |
+|---|---|---|---|
+| lambda/6.3 | -0.11 | 0.15 | 0.27 |
+| lambda/10 | +0.08 | 0.08 | 0.14 |
+
+All results are within **0.36 dB** (pattern RMS 0.08–0.18 dB), far inside the
+2 dB validation target, including the deep-null directions that the total-field
+formulation could not resolve. The earlier total-field failures (several dB to
+tens of dB, frequency dependent) were caused by the absorbing boundary
+reflection of the strong incident wave; the scattered-field formulation keeps
+the incident wave off the absorbing boundary entirely, so only the (much weaker)
+scattered field interacts with it.
 
 The total-field formulation is still the default and is unchanged; it remains
 appropriate for port and waveguide excitations. A known discrepancy remains
