@@ -643,6 +643,79 @@ Z_s = \frac{1}{\delta\sigma}\left(\frac{\sinh{\nu}+\sin{\nu}}{\cosh{\nu}+\cos{\n
 where ``\nu = h/\delta`` and ``h`` is the layer thickness. This model correctly produces the
 DC limit when ``h\ll\delta``.
 
+## Spherical Dirichlet-to-Neumann boundary condition
+
+On a spherical absorbing boundary ``\Gamma`` of radius ``R``, the exact nonreflecting
+boundary condition for outgoing fields can be written explicitly in terms of the
+orthonormal vector spherical harmonics
+
+```math
+\bm{\Psi}^{TE}_{nm} = \frac{\hat{\bm{r}}\times\nabla_s Y_{nm}}{R\sqrt{n(n+1)}} \,,\quad
+\bm{\Psi}^{TM}_{nm} = \frac{\nabla_s Y_{nm}}{R\sqrt{n(n+1)}} \,,
+```
+
+where ``Y_{nm}`` are the real orthonormal spherical harmonics and ``\nabla_s`` is the
+surface gradient on the unit sphere, ``\oint_\Gamma \bm{\Psi}_j\cdot\bm{\Psi}_{j'}\,dS =
+\delta_{jj'}``. An outgoing field of degree ``n`` behaves as ``h_n^{(2)}(kr)`` (for the
+``e^{i\omega t}`` time convention), and each mode satisfies exactly
+``\bm{n}\times\nabla\times\bm{E} = \lambda\bm{E}_t`` on ``\Gamma`` [[13]](#References),
+with
+
+```math
+\lambda^{TE}_n = -k\frac{\zeta_n'(kR)}{\zeta_n(kR)} \,,\quad
+\lambda^{TM}_n = k\frac{\zeta_n(kR)}{\zeta_n'(kR)} \,,
+```
+
+where ``\zeta_n(x) = x h_n^{(2)}(x)`` is the Riccati-Hankel function and ``k`` the
+wavenumber of the medium adjacent to ``\Gamma``. As ``kR\to\infty``, ``\lambda\to ik`` for
+all modes, which is the first-order absorbing boundary condition. The exact condition is
+therefore implemented as the first-order absorbing boundary condition plus the low-rank,
+frequency dependent correction
+
+```math
+\mu_r^{-1}\sum_{j}\left(\lambda_j - ik\right)\bm{w}_j\bm{w}_j^T \,,\quad
+(\bm{w}_j)_i = \oint_\Gamma\bm{\Psi}_j\cdot\bm{\phi}_i\,dS \,,
+```
+
+added to the system matrix, where ``\bm{\phi}_i`` are the Nédélec basis functions and the
+sum runs over the TE and TM modes of degree ``n\leq N``. Modes of higher degree, which are
+evanescent at ``\Gamma`` when ``N > kR``, are treated with the first-order condition. The
+mode vectors ``\bm{w}_j`` are assembled once, and the correction is applied matrix-free
+(it is not included in the preconditioner).
+
+## Plane wave excitation
+
+For scattering problems, the total field ``\bm{E} = \bm{E}_{inc} + \bm{E}_s`` is the sum of
+an incident field, a plane wave ``\bm{E}_{inc} = E_0\hat{\bm{p}}e^{-ik\hat{\bm{k}}\cdot\bm{x}}``
+which satisfies Maxwell's equations in the background medium (the medium adjacent to the
+absorbing boundary), and a scattered field ``\bm{E}_s`` which is outgoing and on which the
+absorbing boundary condition is imposed. Let ``\bm{A}(\omega)`` be the system matrix, and
+``\bm{A}_{bg}(\omega)`` the matrix obtained by assigning the background material properties
+to the entire domain and keeping only the absorbing boundary condition among the boundary
+conditions (no essential boundary conditions eliminated). *Palace* computes the total field
+by solving
+
+```math
+\bm{A}(\omega)\bm{E} = \bm{A}_{bg}(\omega)\bm{\Pi}\bm{E}_{inc}
+```
+
+with homogeneous essential boundary conditions on ``\bm{E}``, where ``\bm{\Pi}`` is the
+Nédélec interpolant. Then, the scattered field ``\bm{E}_s = \bm{E} - \bm{\Pi}\bm{E}_{inc}``
+satisfies
+
+```math
+\bm{A}(\omega)\bm{E}_s = -(\bm{A}(\omega) - \bm{A}_{bg}(\omega))\bm{\Pi}\bm{E}_{inc}
+```
+
+with ``\bm{n}\times\bm{E}_s = -\bm{n}\times\bm{\Pi}\bm{E}_{inc}`` on PEC boundaries: this
+is exactly the discrete scattered field formulation, in which the source is supported only
+where the model differs from the background (penetrable scatterers, PEC, impedance, or other
+boundaries), and the absorbing boundary condition acts on the scattered field alone. In
+particular, the discretization error of the incident field does not pollute the scattered
+field in the background medium. The far field and radar cross section are computed from
+``\bm{E}_s`` and ``\bm{B}_s = -\nabla\times\bm{E}_s/(i\omega)`` on the absorbing boundary,
+using the [far-field transformation](#Far-field-extraction).
+
 ## Energy-participation ratios
 
 The energy-participation ratio (EPR) for lumped inductive elements is computed from the
@@ -956,4 +1029,10 @@ problems lacking uniform inf-sup stability, _SIAM Journal on Numerical
 Analysis_ 58 (2020) 2265-2293. doi:
 [10.1137/19M1269695](https://doi.org/10.1137/19M1269695).\
 [11] R. B. Marks and D. F. Williams, A general waveguide circuit theory, *J. Res. Natl. Inst. Stan.* 97, 533 (1992).\
-[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.
+[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.\
+[13] J. B. Keller and D. Givoli, Exact non-reflecting boundary conditions, *Journal of
+Computational Physics* 82 (1989) 172-192; M. J. Grote and J. B. Keller, Nonreflecting
+boundary condition for Maxwell's equations, *Journal of Computational Physics* 139 (1998)
+327-342.\
+[14] C. F. Bohren and D. R. Huffman, *Absorption and Scattering of Light by Small
+Particles*, Wiley, New York, 1983.

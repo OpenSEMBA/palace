@@ -134,6 +134,12 @@ protected:
   //   Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x z_hat)
   std::unique_ptr<GridFunction> En, Bt_inplane;
 
+  // Driven: scattered fields E_s = E - E_inc and B_s = B - B_inc for excitations with an
+  // incident plane wave. The far field is computed from these when use_scattered_farfield
+  // is set, since the total field includes the (non-radiating) incident plane wave.
+  std::unique_ptr<GridFunction> E_sc, B_sc;
+  bool use_scattered_farfield = false;
+
   // Field output format control flags.
   bool enable_paraview_output = false;
   bool enable_gridfunction_output = false;
@@ -334,6 +340,12 @@ protected:
   void MeasureSurfaceFlux() const;
   void MeasureFarField() const;
   void MeasureInterfaceEFieldEnergy() const;  // Depends: LumpedPorts
+
+  // Driven: prepare the scattered field grid functions for far-field postprocessing of
+  // incident plane wave excitations. Requires measurement_cache.ex_idx and .freq.
+  template <ProblemType U = solver_t>
+  auto SetScatteredFieldGridFunctions(const ComplexVector &e)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
   void MeasureProbes() const;
 
   // Helper function called by all solvers. Has to ensure correct call order to deal with

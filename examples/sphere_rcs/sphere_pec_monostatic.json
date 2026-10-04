@@ -1,0 +1,87 @@
+{
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/sphere_pec_monostatic"
+  },
+  "Model": {
+    "Mesh": "mesh/sphere_pec.msh",
+    "L0": 1.0
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ],
+    "PlaneWave": [
+      {
+        "Index": 1,
+        "Direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "Polarization": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "Amplitude": 1.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "Absorbing": {
+      "Attributes": [
+        1
+      ],
+      "Order": 1,
+      "DtN": true
+    },
+    "Postprocessing": {
+      "FarField": {
+        "Attributes": [
+          1
+        ],
+        "ThetaPhis": [
+          [
+            0.0,
+            0.0
+          ]
+        ]
+      }
+    },
+    "PEC": {
+      "Attributes": [
+        2
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 3,
+    "Device": "CPU",
+    "Driven": {
+      "Samples": [
+        {
+          "Type": "Linear",
+          "MinFreq": 0.02,
+          "MaxFreq": 0.48,
+          "FreqStep": 0.01,
+          "SaveStep": 0
+        }
+      ]
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1e-08,
+      "MaxIts": 200,
+      "ComplexCoarseSolve": true
+    }
+  }
+}

@@ -104,6 +104,10 @@ struct Measurement
 
     // Components of the electric field.
     std::vector<std::array<std::complex<double>, 3>> E_field;
+
+    // Incident plane wave amplitude for radar cross section normalization (driven, zero if
+    // the excitation is not a single incident plane wave).
+    double E_inc = 0.0;
   };
 
   // Data for both lumped and wave port.
@@ -383,6 +387,15 @@ protected:
   template <ProblemType U = solver_t>
   auto PrintFarFieldE(const SurfacePostOperator &surf_post_op)
       -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void>;
+
+  // Driven: radar cross section for incident plane wave excitations.
+  std::optional<TableWithCSVFile> farfield_rcs;
+  template <ProblemType U = solver_t>
+  auto InitializeFarFieldRCS(const SurfacePostOperator &surf_post_op,
+                             const SpaceOperator &fem_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  template <ProblemType U = solver_t>
+  auto PrintFarFieldRCS() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
   // Eigenmode.
   std::optional<TableWithCSVFile> eig;

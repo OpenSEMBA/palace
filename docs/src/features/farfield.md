@@ -10,7 +10,8 @@ SPDX-License-Identifier: Apache-2.0
 When run in the [`Driven` or `Eigenmode` modes](../guide/problem.md), *Palace*
 can extrapolate fields from the near-field region (being simulated) to the
 far-field zone. This capability can be used to study the radiative properties of
-a system.
+a system, or, combined with an incident plane wave excitation, its scattering properties
+such as the [radar cross section](#Plane-wave-scattering-and-radar-cross-section).
 
 The mathematical details on how this is accomplished are available in the
 [reference](../reference.md#Far-field-extraction). The key points are as
@@ -121,3 +122,93 @@ This type of output can be processed by several different packages and
 languages. For instance, see the [antenna example](../examples/antenna.md) for
 an example of a [Julia](https://julialang.org/) script that plots antenna
 patterns.
+
+## Plane wave scattering and radar cross section
+
+In `"Driven"` simulations, the model can be illuminated by an incident plane wave, which
+is the typical setup for computing the scattering properties of an object such as its
+[radar cross section](https://en.wikipedia.org/wiki/Radar_cross_section) (RCS). Plane waves
+are specified in the [`config["Domains"]["PlaneWave"]`](../config/reference.md#config-domains-planewave)
+array, with each entry defining the incident field
+
+```math
+\mathbf{E}_{inc}(\mathbf{x}) = E_0 \, \hat{\mathbf{p}} \, e^{-ik\hat{\mathbf{k}}\cdot\mathbf{x}}
+```
+
+with propagation direction ``\hat{\mathbf{k}}`` (`"Direction"`), polarization
+``\hat{\mathbf{p}} \perp \hat{\mathbf{k}}`` (`"Polarization"`), and amplitude ``E_0``
+in V/m (`"Amplitude"`, default 1 V/m), where ``k`` is the wavenumber in the background
+medium, the material adjacent to the absorbing boundary. Each plane wave defines its own
+excitation, with excitation index equal to its `"Index"`, so that several incidence
+directions or polarizations (for example for a monostatic RCS as a function of the
+incidence angle) can be computed in a single simulation, reusing the same discretization.
+
+*Palace* uses a scattered field formulation (see the
+[reference](../reference.md#Plane-wave-excitation)): the computed electric field is the
+total field ``\mathbf{E} = \mathbf{E}_{inc} + \mathbf{E}_s``, but the absorbing boundary
+condition acts only on the scattered field ``\mathbf{E}_s``, which is the only field
+radiating to infinity. Scatterers can be any combination of PEC boundaries, impedance or
+conductivity boundaries, and (possibly anisotropic or lossy) materials, as long as the
+background medium adjacent to the absorbing boundary is isotropic and lossless. The fields
+written for visualization are the total fields.
+
+For excitations with an incident plane wave, the far field written to `farfield-rE.csv` is
+the far field of the scattered field ``r \mathbf{E}_s``. When the plane wave is the only
+source of the excitation, *Palace* additionally writes the bistatic radar cross section
+
+```math
+\sigma(\theta, \phi) = \lim_{r\to\infty} 4 \pi r^2 \frac{|\mathbf{E}_s|^2}{|\mathbf{E}_{inc}|^2}
+  = 4 \pi \frac{|r \mathbf{E}_s|^2}{E_0^2}
+```
+
+to the file `farfield-rcs.csv`, with columns:
+
+  - `f (GHz)` : Frequency
+  - `exc` : Excitation index (equal to the plane wave index)
+  - `theta (deg.)`, `phi (deg.)` : Observation direction
+  - `RCS (m^2)` : Total RCS ``\sigma = \sigma_\theta + \sigma_\phi``
+  - `RCS_theta (m^2)`, `RCS_phi (m^2)` : RCS of the ``\hat{\boldsymbol{\theta}}`` and
+    ``\hat{\boldsymbol{\phi}}`` polarized components of the scattered field,
+    ``\sigma_\theta = 4 \pi |r E_{s,\theta}|^2 / E_0^2`` and
+    ``\sigma_\phi = 4 \pi |r E_{s,\phi}|^2 / E_0^2``
+
+The RCS in dBsm is ``10 \log_{10}(\sigma / 1\text{ m}^2)``. The monostatic
+(backscattering) RCS is obtained for the observation direction ``-\hat{\mathbf{k}}``.
+
+The accuracy of the computed RCS is often limited by the spurious reflections of the
+absorbing boundary condition, which pollute the weak scattered field, rather than by the
+discretization. It is therefore recommended to truncate the domain with a sphere centered
+on the scatterer and to use the exact spherical Dirichlet-to-Neumann boundary condition by
+setting `"DtN": true` in
+[`config["Boundaries"]["Absorbing"]`](../config/reference.md#config-boundaries-absorbing)
+(see [Absorbing boundary](../guide/boundaries.md#Absorbing-(scattering)-boundary)). With it,
+the outer sphere can be placed a fraction of a wavelength away from the scatterer. A typical
+configuration is:
+
+```json
+"Domains":
+{
+  "Materials": [{"Attributes": [1]}],
+  "PlaneWave":
+  [
+    {
+      "Index": 1,
+      "Direction": "-Z",
+      "Polarization": "+X",
+      "Amplitude": 1.0
+    }
+  ]
+},
+"Boundaries":
+{
+  "PEC": {"Attributes": [2]},
+  "Absorbing": {"Attributes": [1], "DtN": true},
+  "Postprocessing":
+  {
+    "FarField": {"Attributes": [1], "NSample": 1000}
+  }
+}
+```
+
+The [sphere RCS example](../examples/sphere_rcs.md) validates this capability against the
+Mie series for perfectly conducting and dielectric spheres.

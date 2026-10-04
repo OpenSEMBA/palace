@@ -69,6 +69,23 @@ and is available for eigenmode or frequency or time domain driven simulation typ
 second-order absorbing boundary condition is only available for frequency domain
 simulations.
 
+Low-order absorbing boundary conditions reflect part of the waves which are not normally
+incident on the boundary, and the reflections decay only slowly as the boundary is moved
+away from the sources. When the absorbing boundary is a sphere, the exact
+Dirichlet-to-Neumann (DtN) nonreflecting boundary condition can be used instead by setting
+`"DtN": true` (with `"Order": 1`) under
+[`config["Boundaries"]["Absorbing"]`](../config/reference.md#config-boundaries-absorbing).
+The first-order condition is then corrected exactly for all vector spherical harmonic
+modes up to degree `"DtNMaxDegree"` (by default ``\lceil kR \rceil + 6``, with ``k`` the
+wavenumber and ``R`` the radius of the sphere), which removes the spurious reflections for
+the propagating part of the field and allows the boundary to be placed close to the
+sources. The correction is a low-rank, frequency dependent term in the system matrix (see
+the [reference](../reference.md#Spherical-Dirichlet-to-Neumann-boundary-condition)), and is
+only available for frequency domain driven simulations with a uniform frequency sweep. The
+absorbing boundary must be a sphere (the center and radius are determined from the mesh,
+unless `"DtNCenter"` is given), adjacent to a single isotropic material, and its mesh must
+resolve the angular variation of the highest degree harmonics.
+
 [Perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer)
 boundaries for frequency and time domain electromagnetic formulations are not yet
 implemented, but are

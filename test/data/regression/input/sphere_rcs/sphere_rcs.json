@@ -1,0 +1,80 @@
+{
+  // Radar cross section of a PEC sphere of radius 0.5 m at 150 MHz (ka = 1.57), with an
+  // incident plane wave along -Z polarized along +X and the exact spherical DtN absorbing
+  // boundary. The mesh is generated with examples/sphere_rcs/mesh/mesh.py --radius 0.5
+  // --radius-farfield 1.0 --h-sphere 0.1 --h-farfield 0.2.
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/sphere_rcs"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/sphere_rcs.msh",
+    "L0": 1.0  // m
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1]
+      }
+    ],
+    "PlaneWave":
+    [
+      {
+        "Index": 1,
+        "Direction": "-Z",
+        "Polarization": "+X",
+        "Amplitude": 1.0  // V/m
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]
+    },
+    "Absorbing":
+    {
+      "Attributes": [1],
+      "DtN": true
+    },
+    "Postprocessing":
+    {
+      "FarField":
+      {
+        "Attributes": [1],
+        "ThetaPhis": [[0.0, 0.0], [45.0, 0.0], [90.0, 0.0], [135.0, 0.0], [180.0, 0.0],
+                      [45.0, 90.0], [90.0, 90.0], [135.0, 90.0]]
+      }
+    }
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven":
+    {
+      "Samples":
+      [
+        {
+          "Type": "Point",
+          "Freq": [0.15],  // GHz
+          "SaveStep": 0
+        }
+      ]
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIts": 200,
+      "ComplexCoarseSolve": true
+    }
+  }
+}

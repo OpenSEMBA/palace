@@ -744,6 +744,9 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
     config::Nondimensionalize(units, data);
   }
 
+  // Spherical DtN absorbing boundary center.
+  config::Nondimensionalize(units, boundaries.farfield);
+
   // Finite conductivity boundaries.
   for (auto &data : boundaries.conductivity)
   {

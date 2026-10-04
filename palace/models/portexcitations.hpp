@@ -16,10 +16,11 @@ class LumpedPortOperator;
 class WavePortOperator;
 class SurfaceCurrentOperator;
 class CurrentDipoleOperator;
+class PlaneWaveOperator;
 
 // Small helper class to collect data of what (lumped / wave / surface current / current
-// dipole) sources are excited in driven and transient simulation, as stored in space_op;
-// Manages indices.
+// dipole / plane wave) sources are excited in driven and transient simulation, as stored in
+// space_op; Manages indices.
 
 enum class PortType : std::uint8_t
 {
@@ -28,7 +29,8 @@ enum class PortType : std::uint8_t
   FloquetPort = 2,
   CurrentPort = 3,
   CurrentDipole = 4,
-  Undefined = 5
+  Undefined = 5,
+  PlaneWave = 6
 };
 
 class PortExcitations
@@ -41,6 +43,7 @@ public:
     std::vector<int> floquet_port = {};
     std::vector<int> current_port = {};
     std::vector<int> current_dipole = {};
+    std::vector<int> plane_wave = {};
 
     // TODO: C++20 to replace this with iterator over joined range.
     auto FlattenPortIndices() const
@@ -51,6 +54,7 @@ public:
       out.insert(out.end(), floquet_port.cbegin(), floquet_port.cend());
       out.insert(out.end(), current_port.cbegin(), current_port.cend());
       out.insert(out.end(), current_dipole.cbegin(), current_dipole.cend());
+      out.insert(out.end(), plane_wave.cbegin(), plane_wave.cend());
       return out;
     }
 
@@ -62,7 +66,8 @@ public:
       auto n_floquet = floquet_port.size();
       auto n_current = current_port.size();
       auto n_dipole = current_dipole.size();
-      auto n_total = n_lumped + n_wave + n_floquet + n_current + n_dipole;
+      auto n_plane = plane_wave.size();
+      auto n_total = n_lumped + n_wave + n_floquet + n_current + n_dipole + n_plane;
 
       if (n_total != 1)
       {
@@ -88,6 +93,10 @@ public:
       {
         return std::make_tuple(true, PortType::CurrentDipole, current_dipole.at(0));
       }
+      else if (n_plane == 1)
+      {
+        return std::make_tuple(true, PortType::PlaneWave, plane_wave.at(0));
+      }
       return std::make_tuple(false, PortType::Undefined, 0);
     }
   };
@@ -103,7 +112,8 @@ public:
                   const WavePortOperator &wave_port_op,
                   const FloquetPortOperator &floquet_port_op,
                   const SurfaceCurrentOperator &surf_j_op,
-                  const CurrentDipoleOperator &dipole_op);
+                  const CurrentDipoleOperator &dipole_op,
+                  const PlaneWaveOperator &plane_wave_op);
 
   [[nodiscard]] int MaxIdx() const
   {

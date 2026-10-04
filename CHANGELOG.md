@@ -31,6 +31,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
+  - Added incident plane wave excitations for driven scattering simulations, specified in
+    `Domains.PlaneWave`, using a scattered field formulation so that the absorbing
+    boundary condition acts only on the scattered field. For plane wave excitations, the
+    far field in `farfield-rE.csv` is that of the scattered field, and the bistatic radar
+    cross section is written to `farfield-rcs.csv`. SchemaVer 2-2-0.
+  - Added the exact spherical Dirichlet-to-Neumann nonreflecting boundary condition for
+    spherical absorbing boundaries in driven simulations, enabled with
+    `Boundaries.Absorbing.DtN` (with `DtNMaxDegree` and `DtNCenter`), which removes the
+    spurious reflections of the low-order absorbing boundary conditions.
+  - Added the `sphere_rcs` example computing the radar cross section of perfectly
+    conducting and dielectric spheres, validated against the Mie series.
 
 #### Interface Changes
 

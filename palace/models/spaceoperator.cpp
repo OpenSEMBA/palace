@@ -3,6 +3,7 @@
 
 #include "spaceoperator.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <set>
 #include <type_traits>
@@ -65,8 +66,9 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     floquet_port_op(boundaries.floquetport, boundaries.periodic, problem_type, units,
                     mat_op, GetNDSpace().Get()),
     surf_j_op(boundaries.current, *mesh.back()),
+    plane_wave_op(domains.plane_wave, problem_type, units),
     port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, surf_j_op,
-                           current_dipole_op)
+                           current_dipole_op, plane_wave_op)
 {
   // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.
   // Must use INTEGRAL map type so the discrete interpolator recognizes this as the curl
@@ -84,6 +86,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
 
   // Finalize setup.
   CheckBoundaryProperties();
+  SetUpPlaneWaveBackground();
 
   // Print essential BC information.
   if (dbc_attr.Size())
@@ -892,6 +895,7 @@ SpaceOperator::GetExtraSystemOperator(double omega, Operator::DiagonalPolicy dia
   auto W = wave_port_op.GetModalCorrectionOperator(omega, GetNDSpace(),
                                                    nd_dbc_tdof_lists.back());
   auto F = floquet_port_op.GetExtraSystemOperator(omega);
+  auto T = farfield_op.GetDtNOperator(omega, GetNDSpace(), &nd_dbc_tdof_lists.back());
   std::unique_ptr<ComplexOperator> op;
   auto add = [&op](std::unique_ptr<ComplexOperator> term)
   {
@@ -905,6 +909,7 @@ SpaceOperator::GetExtraSystemOperator(double omega, Operator::DiagonalPolicy dia
   add(std::move(A2));
   add(std::move(W));
   add(std::move(F));
+  add(std::move(T));
   return op;
 }
 
@@ -1424,6 +1429,168 @@ void SpaceOperator::AddImagPeriodicCoefficients(double coeff,
   }
 }
 
+void SpaceOperator::SetUpPlaneWaveBackground()
+{
+  if (plane_wave_op.Empty())
+  {
+    return;
+  }
+  MFEM_VERIFY(GetNDSpace().SpaceDimension() == 3,
+              "Incident plane waves are only available for 3D simulations!");
+  MFEM_VERIFY(farfield_op.GetAttrList().Size() > 0,
+              "Incident plane waves require absorbing boundary conditions "
+              "(config[\"Boundaries\"][\"Absorbing\"]) to truncate the domain!");
+  MFEM_VERIFY(!mat_op.HasWaveVector(),
+              "Incident plane waves are not compatible with Floquet periodic boundaries!");
+
+  // The background medium is the one adjacent to the absorbing boundary. It must be
+  // unique, isotropic, and lossless, since the incident field propagates in it.
+  // Reduce {min k, -max k} over the material indices k adjacent to the boundary.
+  const auto bdr_attr_mat = mat_op.GetBdrAttributeToMaterial();
+  int mat_range[2] = {std::numeric_limits<int>::max(), std::numeric_limits<int>::max()};
+  for (auto attr : mat_op.GetCeedBdrAttributes(farfield_op.GetAttrList()))
+  {
+    const int k = bdr_attr_mat[attr - 1];
+    if (k >= 0)
+    {
+      mat_range[0] = std::min(mat_range[0], k);
+      mat_range[1] = std::min(mat_range[1], -k);
+    }
+  }
+  Mpi::GlobalMin(2, mat_range, GetComm());
+  MFEM_VERIFY(mat_range[0] < std::numeric_limits<int>::max(),
+              "No absorbing boundary elements found for incident plane waves!");
+  MFEM_VERIFY(mat_range[0] == -mat_range[1],
+              "Incident plane waves require all absorbing boundaries to be adjacent to the "
+              "same (background) material!");
+  plane_wave_bg_mat = mat_range[0];
+
+  auto IsScaledIdentity = [](const mfem::DenseMatrix &A)
+  {
+    for (int i = 0; i < A.Height(); i++)
+    {
+      for (int j = 0; j < A.Width(); j++)
+      {
+        if ((i == j && A(i, j) != A(0, 0)) || (i != j && A(i, j) != 0.0))
+        {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+  const int k = plane_wave_bg_mat;
+  MFEM_VERIFY(IsScaledIdentity(mat_op.GetPermittivityReal()(k)) &&
+                  IsScaledIdentity(mat_op.GetInvPermeability()(k)),
+              "Incident plane waves require an isotropic background material!");
+  MFEM_VERIFY(mat_op.GetPermittivityImag()(k).MaxMaxNorm() == 0.0 &&
+                  mat_op.GetConductivity()(k).MaxMaxNorm() == 0.0 &&
+                  mat_op.GetInvLondonDepth()(k).MaxMaxNorm() == 0.0,
+              "Incident plane waves require a lossless background material!");
+}
+
+double SpaceOperator::GetPlaneWaveWavenumber(double omega) const
+{
+  MFEM_VERIFY(plane_wave_bg_mat >= 0, "No incident plane wave background medium!");
+  const int k = plane_wave_bg_mat;
+  return omega * std::sqrt(mat_op.GetPermittivityReal()(k)(0, 0) /
+                           mat_op.GetInvPermeability()(k)(0, 0));
+}
+
+bool SpaceOperator::GetPlaneWaveIncidentField(int excitation_idx, double omega,
+                                              ComplexVector &E_inc)
+{
+  if (!plane_wave_op.HasExcitation(excitation_idx))
+  {
+    E_inc.SetSize(GetNDSpace().GetTrueVSize());
+    E_inc.UseDevice(true);
+    E_inc = 0.0;
+    return false;
+  }
+  return plane_wave_op.GetIncidentField(excitation_idx, GetPlaneWaveWavenumber(omega),
+                                        GetNDSpace(), E_inc);
+}
+
+void SpaceOperator::AssemblePlaneWaveBackgroundOperators()
+{
+  if (plane_wave_K)
+  {
+    return;
+  }
+
+  // Background material coefficients: every domain attribute maps to the background
+  // material. The absorbing boundary terms are identical to those of the system matrix.
+  mfem::Array<int> attr_mat_bg(mat_op.MaxCeedAttribute());
+  attr_mat_bg = plane_wave_bg_mat;
+  MaterialPropertyCoefficient df(attr_mat_bg, mat_op.GetCurlCurlInvPermeability()),
+      f(attr_mat_bg, mat_op.GetPermittivityReal()), fb(mat_op.MaxCeedBdrAttribute()),
+      dfb(mat_op.MaxCeedBdrAttribute());
+  farfield_op.AddDampingBdrCoefficients(1.0, fb);
+  farfield_op.AddExtraSystemBoundaryCurlCurlBdrCoefficients(1.0, dfb);
+  int empty[2] = {fb.IsExactlyZero(), dfb.IsExactlyZero()};
+  Mpi::GlobalMin(2, empty, GetComm());
+
+  // No essential boundary conditions are eliminated: the source A_bg Π(E_inc) must
+  // include the coupling to the incident field interpolant on PEC boundaries.
+  constexpr bool skip_zeros = false;
+  plane_wave_K = std::make_unique<ParOperator>(
+      AssembleOperator(GetNDSpace(), &df, nullptr, nullptr, nullptr, nullptr, skip_zeros),
+      GetNDSpace());
+  plane_wave_M = std::make_unique<ParOperator>(
+      AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, nullptr, nullptr, skip_zeros),
+      GetNDSpace());
+  if (!empty[0])
+  {
+    plane_wave_C = std::make_unique<ParOperator>(
+        AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros),
+        GetNDSpace());
+  }
+  if (!empty[1])
+  {
+    plane_wave_D =
+        std::make_unique<ParOperator>(AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfb,
+                                                       nullptr, nullptr, skip_zeros),
+                                      GetNDSpace());
+  }
+}
+
+bool SpaceOperator::AddPlaneWaveExcitationVector(int excitation_idx, double omega,
+                                                 ComplexVector &RHS)
+{
+  // Plane wave source: RHS += A_bg(ω) Π(E_inc), with
+  //       A_bg(ω) = K_bg + iω C_bg - ω² M_bg + i (0.5 / ω) D_bg + T(ω) ,
+  // the background system matrix (see PlaneWaveOperator), where T(ω) is the optional
+  // spherical DtN correction of the absorbing boundary condition. The essential BC rows of
+  // the result are zeroed by the caller.
+  if (!plane_wave_op.HasExcitation(excitation_idx))
+  {
+    return false;
+  }
+  ComplexVector E_inc;
+  GetPlaneWaveIncidentField(excitation_idx, omega, E_inc);
+  AssemblePlaneWaveBackgroundOperators();
+  plane_wave_K->AddMult(E_inc.Real(), RHS.Real(), 1.0);
+  plane_wave_K->AddMult(E_inc.Imag(), RHS.Imag(), 1.0);
+  plane_wave_M->AddMult(E_inc.Real(), RHS.Real(), -omega * omega);
+  plane_wave_M->AddMult(E_inc.Imag(), RHS.Imag(), -omega * omega);
+  if (plane_wave_C)
+  {
+    plane_wave_C->AddMult(E_inc.Imag(), RHS.Real(), -omega);
+    plane_wave_C->AddMult(E_inc.Real(), RHS.Imag(), omega);
+  }
+  if (plane_wave_D)
+  {
+    const double s = 0.5 / omega;
+    plane_wave_D->AddMult(E_inc.Imag(), RHS.Real(), -s);
+    plane_wave_D->AddMult(E_inc.Real(), RHS.Imag(), s);
+  }
+  if (auto T = farfield_op.GetDtNOperator(omega, GetNDSpace(), nullptr))
+  {
+    T->AddMult(E_inc, RHS);
+  }
+  return true;
+}
+
 bool SpaceOperator::GetExcitationVector(int excitation_idx, Vector &RHS)
 {
   // Time domain excitation vector.
@@ -1618,13 +1785,16 @@ bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omeg
   // Floquet port excitation: directly adds to RHS (not via boundary linear form).
   bool nnz_floquet = floquet_port_op.AddExcitationVector(excitation_idx, omega, RHS2);
 
+  // Incident plane wave excitation: directly adds to RHS.
+  bool nnz_plane_wave = AddPlaneWaveExcitationVector(excitation_idx, omega, RHS2);
+
   SumVectorCoefficient fbr(GetMesh().SpaceDimension()), fbi(GetMesh().SpaceDimension());
   wave_port_op.AddExcitationBdrCoefficients(excitation_idx, omega, fbr, fbi);
   int empty = (fbr.empty() && fbi.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
-    return nnz_floquet;
+    return nnz_floquet || nnz_plane_wave;
   }
   // Restrict the boundary assembly to the excited wave port boundary elements (the
   // coefficients vanish elsewhere).

@@ -1450,6 +1450,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(r2.uniform_ref_levels == r1.uniform_ref_levels);
     CHECK(r2.ser_uniform_ref_levels == r1.ser_uniform_ref_levels);
     CHECK(iodata2.boundaries.farfield.order == iodata1.boundaries.farfield.order);
+    CHECK(iodata2.boundaries.farfield.dtn == iodata1.boundaries.farfield.dtn);
+    CHECK(iodata2.boundaries.farfield.dtn_max_degree ==
+          iodata1.boundaries.farfield.dtn_max_degree);
     REQUIRE(iodata1.boundaries.conductivity.size() == 1);
     REQUIRE(iodata2.boundaries.conductivity.size() == 1);
     CHECK(iodata2.boundaries.conductivity[0].h == iodata1.boundaries.conductivity[0].h);
@@ -1513,8 +1516,10 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     INFO("Model.Refinement missing keys: " << json(ref_gaps).dump());
     CHECK(ref_gaps.empty());
 
+    // DtNCenter is computed from the mesh when absent; there is no scalar default to emit.
     auto abs_gaps = SchemaCoverageGaps("/properties/Boundaries/properties/Absorbing",
-                                       config["Boundaries"]["Absorbing"]);
+                                       config["Boundaries"]["Absorbing"],
+                                       /*skip=*/{"DtNCenter"});
     INFO("Boundaries.Absorbing missing keys: " << json(abs_gaps).dump());
     CHECK(abs_gaps.empty());
 
@@ -1782,6 +1787,43 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                                        /*skip=*/{"MaterialAxes"});
     INFO("Domains.Materials[] missing keys: " << json(mat_gaps).dump());
     CHECK(mat_gaps.empty());
+  }
+
+  SECTION("Round-trip: PlaneWave defaulted fields are reproducible")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials", {{{"Attributes", {1}}}}},
+          {"PlaneWave",
+           {{{"Index", 2}, {"Direction", {0.0, 0.0, -2.0}}, {"Polarization", "+Y"}}}}}},
+        {"Boundaries", {{"Absorbing", {{"Attributes", {1}}, {"DtN", true}}}}},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+    CHECK(config["Domains"]["PlaneWave"][0].contains("Amplitude"));
+
+    IoData iodata2(config, false);
+    REQUIRE(iodata2.domains.plane_wave.count(2) == 1);
+    const auto &pw1 = iodata1.domains.plane_wave.at(2);
+    const auto &pw2 = iodata2.domains.plane_wave.at(2);
+    CHECK(pw2.direction == pw1.direction);
+    CHECK(pw2.polarization == pw1.polarization);
+    CHECK(pw2.amplitude == pw1.amplitude);
+    CHECK(iodata2.boundaries.farfield.dtn);
+    CHECK(iodata2.boundaries.farfield.dtn_max_degree ==
+          iodata1.boundaries.farfield.dtn_max_degree);
+
+    auto pw_gaps = SchemaCoverageGaps("/properties/Domains/properties/PlaneWave/items",
+                                      config["Domains"]["PlaneWave"][0]);
+    INFO("Domains.PlaneWave[] missing keys: " << json(pw_gaps).dump());
+    CHECK(pw_gaps.empty());
   }
 }
 

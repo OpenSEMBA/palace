@@ -67,6 +67,80 @@ palace::test::CustomCheck TestFarfield(double rtol)
   };
 }
 
+// Bistatic radar cross section of a PEC sphere of radius a from the Mie series (Bohren &
+// Huffman, 1983), for a plane wave incident along -z with electric field along +x: the
+// scattering angle from the forward direction is ψ = π - θ, and φ = 0 (φ = 90°) is the
+// E-plane (H-plane), where σ = 4π |S₂(ψ)|² / k² (σ = 4π |S₁(ψ)|² / k²).
+double PecSphereMieRcs(double a, double freq_hz, double theta_deg, bool e_plane)
+{
+  constexpr double c0 = 299792458.0;
+  const double k = 2.0 * M_PI * freq_hz / c0, x = k * a;
+  const int N = static_cast<int>(x + 4.05 * std::cbrt(x) + 2.0) + 5;
+
+  // Spherical Bessel functions by upward recurrence (adequate for the small x used here,
+  // since the coefficients of high degree are dominated by yₙ).
+  std::vector<double> j(N + 1), y(N + 1);
+  j[0] = std::sin(x) / x;
+  j[1] = std::sin(x) / (x * x) - std::cos(x) / x;
+  y[0] = -std::cos(x) / x;
+  y[1] = -std::cos(x) / (x * x) - std::sin(x) / x;
+  for (int n = 2; n <= N; n++)
+  {
+    j[n] = (2 * n - 1) / x * j[n - 1] - j[n - 2];
+    y[n] = (2 * n - 1) / x * y[n - 1] - y[n - 2];
+  }
+
+  const double mu = std::cos(M_PI - theta_deg * M_PI / 180.0);
+  double pi_prev = 0.0, pi_n = 1.0;  // πₙ₋₁, πₙ
+  std::complex<double> S1 = 0.0, S2 = 0.0;
+  for (int n = 1; n <= N; n++)
+  {
+    const std::complex<double> h(j[n], y[n]), h_prev(j[n - 1], y[n - 1]);
+    // ψₙ = x jₙ, ξₙ = x hₙ, with derivatives x zₙ₋₁ - n zₙ.
+    const std::complex<double> an =
+        (x * j[n - 1] - n * j[n]) / (x * h_prev - double(n) * h);
+    const std::complex<double> bn = j[n] / h;
+    const double tau_n = n * mu * pi_n - (n + 1) * pi_prev;
+    const double c = (2.0 * n + 1.0) / (n * (n + 1.0));
+    S1 += c * (an * pi_n + bn * tau_n);
+    S2 += c * (an * tau_n + bn * pi_n);
+    const double pi_next = ((2 * n + 1) * mu * pi_n - (n + 1) * pi_prev) / n;
+    pi_prev = pi_n;
+    pi_n = pi_next;
+  }
+  return 4.0 * M_PI * std::norm(e_plane ? S2 : S1) / (k * k);
+}
+
+// Radar cross section check for a PEC sphere: the RCS columns are compared against the
+// reference at rtol and, as a physical check, against the Mie series at mie_rtol.
+palace::test::CustomCheck TestSphereRcs(double radius, double rtol, double mie_rtol)
+{
+  return [=](palace::Table &a, palace::Table &r, const std::filesystem::path &)
+  {
+    REQUIRE(a.n_cols() == 7);
+    REQUIRE(a.n_cols() == r.n_cols());
+    REQUIRE(a.n_rows() == r.n_rows());
+    for (std::size_t i = 0; i < a.n_rows(); i++)
+    {
+      const double f = a[0].data[i], theta = a[2].data[i], phi = a[3].data[i];
+      INFO("f = " << f << " GHz, theta = " << theta << ", phi = " << phi);
+      for (std::size_t c = 0; c < 4; c++)
+      {
+        CHECK_THAT(a[c].data[i], Catch::Matchers::WithinAbs(r[c].data[i], 1.0e-9));
+      }
+      for (std::size_t c = 4; c < 7; c++)
+      {
+        CHECK_THAT(a[c].data[i],
+                   Catch::Matchers::WithinRel(r[c].data[i], rtol) ||
+                       Catch::Matchers::WithinAbs(r[c].data[i], rtol * a[4].data[i]));
+      }
+      REQUIRE((phi == 0.0 || phi == 90.0));
+      const double sigma_mie = PecSphereMieRcs(radius, f * 1.0e9, theta, phi == 0.0);
+      CHECK_THAT(a[4].data[i], Catch::Matchers::WithinRel(sigma_mie, mie_rtol));
+    }
+  };
+}
+
 // Generalised magnitude comparison for any CSV with paired
 // "Re{X} (unit)" / "Im{X} (unit)" complex columns. For each Re column
 // it pairs the matching Im (looked up by header_text), then compares
@@ -1292,6 +1366,19 @@ TEST_CASE("antenna_halfwave_dipole_surfacecurrent", "[Serial][Parallel][GPU][Reg
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("antenna", "antenna_halfwave_dipole_surfacecurrent.json",
                                   "antenna_halfwave_dipole_surfacecurrent", opts);
+}
+
+// --- sphere_rcs: plane wave scattering from a PEC sphere, checked against Mie ---
+
+TEST_CASE("sphere_rcs", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-10;
+  opts.paraview_fields = false;
+  opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
+  opts.custom_checks["farfield-rcs.csv"] = TestSphereRcs(0.5, opts.rtol, 5.0e-2);
+  palace::test::RunRegressionCase("sphere_rcs", "sphere_rcs.json", "sphere_rcs", opts);
 }
 
 // --- coaxial + cpw non-adaptive + cpw eigen: reltol still 2e-2 (from  ---
