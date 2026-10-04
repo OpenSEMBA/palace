@@ -25,12 +25,17 @@ private:
   bool imag;
   bool include_invz;
   double scale;
+  const std::vector<std::complex<double>> *attr_scale;
+  bool background;
 
 public:
   PlaneWaveVectorCoefficient(const PlaneWaveData &data, double omega, bool imag,
-                             bool include_invz, double scale = 1.0)
+                             bool include_invz, double scale = 1.0,
+                             const std::vector<std::complex<double>> *attr_scale = nullptr,
+                             bool background = false)
     : mfem::VectorCoefficient(3), data(data), omega(omega), imag(imag),
-      include_invz(include_invz), scale(scale)
+      include_invz(include_invz), scale(scale), attr_scale(attr_scale),
+      background(background)
   {
   }
 
@@ -44,14 +49,27 @@ void PlaneWaveVectorCoefficient::Eval(mfem::Vector &V, mfem::ElementTransformati
   mfem::Vector x(3);
   T.Transform(ip, x);
   std::complex<double> E[3];
-  data.GetElectricField(x, omega, T.Attribute, E);
+  if (background)
+  {
+    data.GetBackgroundElectricField(x, omega, E);
+  }
+  else
+  {
+    data.GetElectricField(x, omega, T.Attribute, E);
+  }
   const double invz = (T.Attribute > 0 && T.Attribute <= data.attr_invz.Size())
                           ? data.attr_invz[T.Attribute - 1]
                           : 1.0;
+  std::complex<double> s = scale;
+  if (attr_scale && T.Attribute > 0 &&
+      T.Attribute < static_cast<int>(attr_scale->size()))
+  {
+    s *= (*attr_scale)[T.Attribute];
+  }
   V.SetSize(3);
   for (int d = 0; d < 3; d++)
   {
-    const std::complex<double> v = scale * (include_invz ? invz : 1.0) * E[d];
+    const std::complex<double> v = s * (include_invz ? invz : 1.0) * E[d];
     V(d) = imag ? v.imag() : v.real();
   }
 }
@@ -151,11 +169,9 @@ PlaneWaveData::PlaneWaveData(const config::PlaneWaveData &data,
   }
 }
 
-void PlaneWaveData::GetElectricField(const mfem::Vector &x, double omega, int attr,
-                                     std::complex<double> E[3]) const
+void PlaneWaveData::GetElectricFieldImpl(const mfem::Vector &x, double omega, double c,
+                                         std::complex<double> E[3]) const
 {
-  const double c =
-      (attr > 0 && attr <= attr_c.Size()) ? attr_c[attr - 1] : 1.0;  // Internal c = 1.
   const double k = omega / c;
   double phase = 0.0;
   for (int d = 0; d < 3; d++)
@@ -176,10 +192,25 @@ void PlaneWaveData::GetElectricField(const mfem::Vector &x, double omega, int at
   }
 }
 
+void PlaneWaveData::GetElectricField(const mfem::Vector &x, double omega, int attr,
+                                     std::complex<double> E[3]) const
+{
+  const double c =
+      (attr > 0 && attr <= attr_c.Size()) ? attr_c[attr - 1] : 1.0;  // Internal c = 1.
+  GetElectricFieldImpl(x, omega, c, E);
+}
+
 void PlaneWaveData::GetElectricField(const mfem::Vector &x, double omega,
                                      std::complex<double> E[3]) const
 {
   GetElectricField(x, omega, -1, E);
+}
+
+void PlaneWaveData::GetBackgroundElectricField(const mfem::Vector &x, double omega,
+                                               std::complex<double> E[3]) const
+{
+  // Background medium is internal vacuum, c0 = 1.
+  GetElectricFieldImpl(x, omega, 1.0, E);
 }
 
 PlaneWaveOperator::PlaneWaveOperator(
@@ -243,9 +274,9 @@ void PlaneWaveOperator::AddExcitationBdrCoefficients(int excitation_idx, double 
   }
 }
 
-void PlaneWaveOperator::AddFieldCoefficients(int excitation_idx, double omega,
-                                             SumVectorCoefficient &fr,
-                                             SumVectorCoefficient &fi, double scale) const
+void PlaneWaveOperator::AddFieldCoefficients(
+    int excitation_idx, double omega, SumVectorCoefficient &fr, SumVectorCoefficient &fi,
+    double scale, const std::vector<std::complex<double>> *attr_scale, bool background) const
 {
   for (const auto &[idx, data] : waves)
   {
@@ -253,10 +284,10 @@ void PlaneWaveOperator::AddFieldCoefficients(int excitation_idx, double omega,
     {
       continue;
     }
-    fr.AddCoefficient(
-        std::make_unique<PlaneWaveVectorCoefficient>(data, omega, false, false, scale));
-    fi.AddCoefficient(
-        std::make_unique<PlaneWaveVectorCoefficient>(data, omega, true, false, scale));
+    fr.AddCoefficient(std::make_unique<PlaneWaveVectorCoefficient>(
+        data, omega, false, false, scale, attr_scale, background));
+    fi.AddCoefficient(std::make_unique<PlaneWaveVectorCoefficient>(
+        data, omega, true, false, scale, attr_scale, background));
   }
 }
 

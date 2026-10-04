@@ -1454,38 +1454,123 @@ void SpaceOperator::AddScatteredFieldExcitationVector(const ComplexOperator &A,
                                                       int excitation_idx, double omega,
                                                       ComplexVector &RHS)
 {
-  // Scattered-field formulation: the incident wave enters through the PEC boundary
-  // condition n × E_s = -n × E_inc. Project the tangential incident field onto the ND
-  // space and eliminate it from the RHS using the unconstrained system operator.
+  // Scattered-field formulation. The incident wave enters through:
+  //   (1) volume contrast sources in penetrable (dielectric) regions,
+  //   (2) the PEC boundary condition n x E_s = -n x E_inc.
+  // The background medium is free space (internal c0 = 1), so the incident field is the
+  // free-space plane wave everywhere and the material response is carried by E_s.
   const auto *pw = plane_wave_op.GetExcitationWave(excitation_idx);
   MFEM_VERIFY(pw, "Scattered-field formulation requires an excited plane wave!");
-  int ndbc = nd_dbc_tdof_lists.back().Size();
-  Mpi::GlobalMax(1, &ndbc, GetComm());
-  MFEM_VERIFY(ndbc > 0, "Scattered-field formulation requires PEC boundaries!");
 
   const auto &mesh = GetMesh().Get();
-  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> pec_marker;
-  mesh::AttrToMarker(bdr_attr_max, dbc_attr, pec_marker);
 
-  // Boundary coefficients for the real and imaginary parts of -E_inc.
-  SumVectorCoefficient fr(GetMesh().SpaceDimension()), fi(GetMesh().SpaceDimension());
-  plane_wave_op.AddFieldCoefficients(excitation_idx, omega, fr, fi, -1.0);
+  // Volume contrast sources: RHS += w^2 int (eps_eff - eps0) E_inc . v dV, where eps_eff
+  // is the complex relative permittivity already used by the system matrix, i.e.
+  // eps_eff = eps_r + i (eps_imag - sigma/omega) with eps_imag = -eps_r tan(delta). This
+  // is the nonmagnetic (mu = mu0) contrast; magnetic contrast would add the
+  // (mu0^-1 - mu^-1)(curl E_inc).(curl v) term.
+  const int dom_attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
+  mfem::Array<int> dom_attr_local;
+  if (dom_attr_max > 0)
+  {
+    dom_attr_local.SetSize(dom_attr_max);
+    dom_attr_local = 0;
+    for (int i = 0; i < mesh.GetNE(); i++)
+    {
+      dom_attr_local[mesh.GetAttribute(i) - 1] = 1;
+    }
+  }
+  std::vector<std::complex<double>> attr_scale(dom_attr_max + 1, 0.0);
+  std::vector<int> contrast_attrs;
+  for (int attr = 1; attr <= dom_attr_max; attr++)
+  {
+    if (!dom_attr_local[attr - 1])
+    {
+      continue;
+    }
+    MFEM_VERIFY(mat_op.IsIsotropic(attr),
+                "Scattered-field dielectric contrast sources require isotropic materials, "
+                "but domain attribute "
+                    << attr << " is anisotropic!");
+    const double eps_r = mat_op.GetPermittivityReal(attr)(0, 0);
+    const double eps_i = mat_op.GetPermittivityImag(attr)(0, 0);
+    const double sigma = mat_op.GetConductivity(attr)(0, 0);
+    const std::complex<double> s(eps_r - 1.0, eps_i - sigma / omega);
+    if (std::abs(s) > 0.0)
+    {
+      attr_scale[attr] = s;
+      contrast_attrs.push_back(attr);
+    }
+  }
+  // Local contrast linear forms, assembled only on ranks owning contrast elements. The
+  // prolongation transpose below is collective and must be called by every rank, so the
+  // local forms stay zero on ranks without contrast elements.
+  mfem::LinearForm rhs_re(&GetNDSpace().Get()), rhs_im(&GetNDSpace().Get());
+  rhs_re = 0.0;
+  rhs_im = 0.0;
+  if (!contrast_attrs.empty())
+  {
+    mfem::Array<int> dom_marker;
+    mesh::AttrToMarker(dom_attr_max, contrast_attrs, dom_marker);
+    SumVectorCoefficient cr(GetMesh().SpaceDimension()), ci(GetMesh().SpaceDimension());
+    plane_wave_op.AddFieldCoefficients(excitation_idx, omega, cr, ci, 1.0, &attr_scale,
+                                       true);
+    rhs_re.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(cr), dom_marker);
+    rhs_im.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(ci), dom_marker);
+    rhs_re.UseFastAssembly(false);
+    rhs_re.UseDevice(false);
+    rhs_re.Assemble();
+    rhs_re.UseDevice(true);
+    rhs_im.UseFastAssembly(false);
+    rhs_im.UseDevice(false);
+    rhs_im.Assemble();
+    rhs_im.UseDevice(true);
+  }
+  mfem::Vector br(GetNDSpace().GetTrueVSize()), bi(GetNDSpace().GetTrueVSize());
+  br.UseDevice(true);
+  bi.UseDevice(true);
+  br = 0.0;
+  bi = 0.0;
+  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs_re, br);
+  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs_im, bi);
+  RHS.Real().Add(omega * omega, br);
+  RHS.Imag().Add(omega * omega, bi);
 
-  mfem::ParGridFunction g_re(&GetNDSpace().Get()), g_im(&GetNDSpace().Get());
-  g_re = 0.0;
-  g_im = 0.0;
-  g_re.ProjectBdrCoefficientTangent(fr, pec_marker);
-  g_im.ProjectBdrCoefficientTangent(fi, pec_marker);
+  // PEC boundary condition n x E_s = -n x E_inc, imposed as a non-homogeneous essential
+  // boundary condition and eliminated from the RHS.
+  int ndbc = nd_dbc_tdof_lists.back().Size();
+  Mpi::GlobalMax(1, &ndbc, GetComm());
+  int ncontrast = contrast_attrs.empty() ? 0 : 1;
+  Mpi::GlobalMax(1, &ncontrast, GetComm());
+  MFEM_VERIFY(ndbc > 0 || ncontrast > 0,
+              "Scattered-field formulation requires PEC boundaries or dielectric contrast "
+              "regions!");
+  if (ndbc > 0)
+  {
+    const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> pec_marker;
+    mesh::AttrToMarker(bdr_attr_max, dbc_attr, pec_marker);
 
-  ComplexVector G(GetNDSpace().GetTrueVSize());
-  G.UseDevice(true);
-  g_re.ParallelProject(G.Real());
-  g_im.ParallelProject(G.Imag());
+    // Boundary coefficients for the real and imaginary parts of -E_inc (background field).
+    SumVectorCoefficient fr(GetMesh().SpaceDimension()),
+        fi(GetMesh().SpaceDimension());
+    plane_wave_op.AddFieldCoefficients(excitation_idx, omega, fr, fi, -1.0, nullptr, true);
 
-  const auto *Apar = dynamic_cast<const ComplexParOperator *>(&A);
-  MFEM_VERIFY(Apar, "Scattered-field RHS elimination requires a ComplexParOperator!");
-  Apar->EliminateRHS(G, RHS);
+    mfem::ParGridFunction g_re(&GetNDSpace().Get()), g_im(&GetNDSpace().Get());
+    g_re = 0.0;
+    g_im = 0.0;
+    g_re.ProjectBdrCoefficientTangent(fr, pec_marker);
+    g_im.ProjectBdrCoefficientTangent(fi, pec_marker);
+
+    ComplexVector G(GetNDSpace().GetTrueVSize());
+    G.UseDevice(true);
+    g_re.ParallelProject(G.Real());
+    g_im.ParallelProject(G.Imag());
+
+    const auto *Apar = dynamic_cast<const ComplexParOperator *>(&A);
+    MFEM_VERIFY(Apar, "Scattered-field RHS elimination requires a ComplexParOperator!");
+    Apar->EliminateRHS(G, RHS);
+  }
 }
 
 void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,

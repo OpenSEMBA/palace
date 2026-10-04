@@ -56,6 +56,17 @@ public:
                         std::complex<double> E[3]) const;
   void GetElectricField(const mfem::Vector &x, double omega,
                         std::complex<double> E[3]) const;
+
+  // Evaluate the incident electric field using the background medium (internal vacuum,
+  // c0 = 1) independent of the local material. Used by the scattered-field formulation,
+  // where the incident field is the free-space plane wave and the material response is
+  // carried by the scattered field.
+  void GetBackgroundElectricField(const mfem::Vector &x, double omega,
+                                  std::complex<double> E[3]) const;
+
+private:
+  void GetElectricFieldImpl(const mfem::Vector &x, double omega, double c,
+                            std::complex<double> E[3]) const;
 };
 
 //
@@ -90,9 +101,14 @@ public:
   // Add the incident electric field coefficient pair Re/Im{E_inc} (without the 1/Z
   // factor), used for the second-order absorbing boundary correction and, with
   // scale = -1, for the tangential PEC boundary condition in the scattered-field
-  // formulation.
+  // formulation. If `attr_scale` is provided, the field is evaluated in the background
+  // medium and multiplied by the per-domain-attribute complex scale (used for the
+  // dielectric contrast sources in the scattered-field formulation).
   void AddFieldCoefficients(int excitation_idx, double omega, SumVectorCoefficient &fr,
-                            SumVectorCoefficient &fi, double scale = 1.0) const;
+                            SumVectorCoefficient &fi, double scale = 1.0,
+                            const std::vector<std::complex<double>> *attr_scale =
+                                nullptr,
+                            bool background = false) const;
 
   // Return the first plane wave with the given excitation index, or nullptr if none.
   const PlaneWaveData *GetExcitationWave(int excitation_idx) const;
