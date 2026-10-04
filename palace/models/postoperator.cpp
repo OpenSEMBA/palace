@@ -1966,10 +1966,17 @@ void PostOperator<solver_t>::MeasureFarField() const
     {
       if (surf_post_op.farfield.scattered)
       {
-        incident = fem_op->GetPlaneWaveOp().GetExcitationWave(measurement_cache.ex_idx);
-        if (incident)
+        const PlaneWaveData *pw =
+            fem_op->GetPlaneWaveOp().GetExcitationWave(measurement_cache.ex_idx);
+        if (pw)
         {
-          measurement_cache.farfield.E_inc = std::abs(incident->amplitude);
+          measurement_cache.farfield.E_inc = std::abs(pw->amplitude);
+        }
+        // In the scattered-field formulation the solution is already the scattered field
+        // and no incident subtraction is applied.
+        if (pw && !fem_op->IsScatteredField())
+        {
+          incident = pw;
         }
       }
     }
@@ -1978,8 +1985,9 @@ void PostOperator<solver_t>::MeasureFarField() const
     measurement_cache.farfield.E_field = surf_post_op.GetFarFieldrE(
         measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq, incident);
 
-    // Monostatic RCS: evaluate the scattered far field in the backscatter direction -k̂
-    // for the excited plane wave.
+    // Monostatic RCS: evaluate the scattered far field in the backscatter direction. The
+    // incident phasor exp(-i k k̂·x) travels along +Direction (Palace's exp(+iωt)
+    // convention), so the backscatter (monostatic) direction is -Direction.
     if constexpr (solver_t == ProblemType::DRIVEN)
     {
       if (incident && surf_post_op.farfield.monostatic)

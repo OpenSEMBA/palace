@@ -88,9 +88,11 @@ public:
                                     SumVectorCoefficient &fbi) const;
 
   // Add the incident electric field coefficient pair Re/Im{E_inc} (without the 1/Z
-  // factor), used for the second-order absorbing boundary correction.
+  // factor), used for the second-order absorbing boundary correction and, with
+  // scale = -1, for the tangential PEC boundary condition in the scattered-field
+  // formulation.
   void AddFieldCoefficients(int excitation_idx, double omega, SumVectorCoefficient &fr,
-                            SumVectorCoefficient &fi) const;
+                            SumVectorCoefficient &fi, double scale = 1.0) const;
 
   // Return the first plane wave with the given excitation index, or nullptr if none.
   const PlaneWaveData *GetExcitationWave(int excitation_idx) const;

@@ -1020,6 +1020,19 @@
           "maximum": 2,
           "default": 1,
           "x-palace-advanced": true
+        },
+        "Radius": {
+          "type": "number",
+          "description": "Radius of curvature of the absorbing boundary, for a spherical or circular boundary centered at the origin. Enables the Bayliss-Turkel 2/R curvature term in the second-order absorbing boundary condition. The default (0) corresponds to a planar boundary with infinite radius of curvature.",
+          "minimum": 0,
+          "default": 0,
+          "x-palace-advanced": true
+        },
+        "ScatteredField": {
+          "type": "boolean",
+          "description": "Solve for the scattered field instead of the total field. The incident plane wave is imposed as a tangential electric boundary condition on PEC boundaries, the absorbing boundary condition becomes homogeneous, and the far-field postprocessing treats the solution as the scattered field without incident subtraction. Only available for driven simulations with PEC scatterers and a plane wave excitation.",
+          "default": false,
+          "x-palace-advanced": true
         }
       }
     },

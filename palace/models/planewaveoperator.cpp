@@ -24,12 +24,13 @@ private:
   double omega;
   bool imag;
   bool include_invz;
+  double scale;
 
 public:
   PlaneWaveVectorCoefficient(const PlaneWaveData &data, double omega, bool imag,
-                             bool include_invz)
+                             bool include_invz, double scale = 1.0)
     : mfem::VectorCoefficient(3), data(data), omega(omega), imag(imag),
-      include_invz(include_invz)
+      include_invz(include_invz), scale(scale)
   {
   }
 
@@ -50,7 +51,7 @@ void PlaneWaveVectorCoefficient::Eval(mfem::Vector &V, mfem::ElementTransformati
   V.SetSize(3);
   for (int d = 0; d < 3; d++)
   {
-    const std::complex<double> v = (include_invz ? invz : 1.0) * E[d];
+    const std::complex<double> v = scale * (include_invz ? invz : 1.0) * E[d];
     V(d) = imag ? v.imag() : v.real();
   }
 }
@@ -119,16 +120,18 @@ PlaneWaveData::PlaneWaveData(const config::PlaneWaveData &data,
   }
 
   // Per-boundary-attribute local wave speed and inverse impedance, taken from the adjacent
-  // domain element material. The incident plane wave is defined in this local medium.
+  // domain element material. The incident plane wave is defined in this local medium. All
+  // boundary attributes are filled: the plane wave attributes need them for the
+  // non-homogeneous absorbing boundary terms, and the PEC attributes need them for the
+  // scattered-field tangential boundary condition.
   attr_c.SetSize(bdr_attr_max);
   attr_c = 1.0;
   attr_invz.SetSize(bdr_attr_max);
   attr_invz = 1.0;
-  mfem::Array<int> attr_marker = AttrListToMarker(attr_list);
   for (int i = 0; i < mesh.GetNBE(); i++)
   {
     const int attr = mesh.GetBdrAttribute(i);
-    if (attr <= 0 || attr > bdr_attr_max || !attr_marker[attr - 1])
+    if (attr <= 0 || attr > bdr_attr_max)
     {
       continue;
     }
@@ -242,7 +245,7 @@ void PlaneWaveOperator::AddExcitationBdrCoefficients(int excitation_idx, double 
 
 void PlaneWaveOperator::AddFieldCoefficients(int excitation_idx, double omega,
                                              SumVectorCoefficient &fr,
-                                             SumVectorCoefficient &fi) const
+                                             SumVectorCoefficient &fi, double scale) const
 {
   for (const auto &[idx, data] : waves)
   {
@@ -251,9 +254,9 @@ void PlaneWaveOperator::AddFieldCoefficients(int excitation_idx, double omega,
       continue;
     }
     fr.AddCoefficient(
-        std::make_unique<PlaneWaveVectorCoefficient>(data, omega, false, false));
+        std::make_unique<PlaneWaveVectorCoefficient>(data, omega, false, false, scale));
     fi.AddCoefficient(
-        std::make_unique<PlaneWaveVectorCoefficient>(data, omega, true, false));
+        std::make_unique<PlaneWaveVectorCoefficient>(data, omega, true, false, scale));
   }
 }
 

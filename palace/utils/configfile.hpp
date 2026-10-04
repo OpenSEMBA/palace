@@ -370,6 +370,19 @@ public:
   // Approximation order for farfield ABC.
   int order = 1;
 
+  // Radius of curvature of the absorbing boundary (0 = infinite, i.e. a planar boundary).
+  // For a spherical or circular absorbing boundary of radius R this adds the Bayliss-Turkel
+  // curvature term 2/R to the second-order ABC coefficient beta = 1/(2ik + 2/R). The
+  // boundary is assumed to be centered at the origin of the simulation coordinates.
+  double radius = 0.0;
+
+  // Solve for the scattered field instead of the total field. The incident plane wave is
+  // imposed as a tangential electric boundary condition on PEC boundaries, the absorbing
+  // boundary condition becomes homogeneous, and the far-field postprocessing treats the
+  // solution as the scattered field (no incident subtraction). Only available for driven
+  // simulations with PEC scatterers and a plane wave excitation.
+  bool scattered_field = false;
+
   // List of boundary attributes with farfield absorbing boundary conditions.
   std::vector<int> attributes = {};
 

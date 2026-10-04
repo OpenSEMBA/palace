@@ -1450,6 +1450,44 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
   return nnz1 || nnz2;
 }
 
+void SpaceOperator::AddScatteredFieldExcitationVector(const ComplexOperator &A,
+                                                      int excitation_idx, double omega,
+                                                      ComplexVector &RHS)
+{
+  // Scattered-field formulation: the incident wave enters through the PEC boundary
+  // condition n × E_s = -n × E_inc. Project the tangential incident field onto the ND
+  // space and eliminate it from the RHS using the unconstrained system operator.
+  const auto *pw = plane_wave_op.GetExcitationWave(excitation_idx);
+  MFEM_VERIFY(pw, "Scattered-field formulation requires an excited plane wave!");
+  int ndbc = nd_dbc_tdof_lists.back().Size();
+  Mpi::GlobalMax(1, &ndbc, GetComm());
+  MFEM_VERIFY(ndbc > 0, "Scattered-field formulation requires PEC boundaries!");
+
+  const auto &mesh = GetMesh().Get();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> pec_marker;
+  mesh::AttrToMarker(bdr_attr_max, dbc_attr, pec_marker);
+
+  // Boundary coefficients for the real and imaginary parts of -E_inc.
+  SumVectorCoefficient fr(GetMesh().SpaceDimension()), fi(GetMesh().SpaceDimension());
+  plane_wave_op.AddFieldCoefficients(excitation_idx, omega, fr, fi, -1.0);
+
+  mfem::ParGridFunction g_re(&GetNDSpace().Get()), g_im(&GetNDSpace().Get());
+  g_re = 0.0;
+  g_im = 0.0;
+  g_re.ProjectBdrCoefficientTangent(fr, pec_marker);
+  g_im.ProjectBdrCoefficientTangent(fi, pec_marker);
+
+  ComplexVector G(GetNDSpace().GetTrueVSize());
+  G.UseDevice(true);
+  g_re.ParallelProject(G.Real());
+  g_im.ParallelProject(G.Imag());
+
+  const auto *Apar = dynamic_cast<const ComplexParOperator *>(&A);
+  MFEM_VERIFY(Apar, "Scattered-field RHS elimination requires a ComplexParOperator!");
+  Apar->EliminateRHS(G, RHS);
+}
+
 void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
                                                            ComplexVector &Et_primary)
 {
@@ -1654,8 +1692,11 @@ bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omeg
   // Incident plane wave excitation: non-homogeneous absorbing boundary contribution
   // RHS += iω ∫ (1/Z) E_inc · v dS. The corresponding left-hand side term is iω C_b, so
   // with b = b_r + i b_i we add -ω b_i to the real part and +ω b_r to the imaginary part.
+  // In the scattered-field formulation the absorbing boundary condition is homogeneous
+  // and the incident field is imposed on the PEC boundaries instead.
+  const bool scattered_field = farfield_op.IsScatteredField();
   bool nnz_planewave = false;
-  if (!plane_wave_op.Empty())
+  if (!scattered_field && !plane_wave_op.Empty())
   {
     SumVectorCoefficient pbr(GetMesh().SpaceDimension()),
         pbi(GetMesh().SpaceDimension());
@@ -1695,7 +1736,7 @@ bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omeg
   // the boundary curl-curl matrix already used in the system matrix A2. The incident field
   // is projected onto the ND space and the cached matrix applied.
   bool nnz_planewave2 = false;
-  if (farfield_op.GetOrder() > 1 && !plane_wave_op.Empty())
+  if (!scattered_field && farfield_op.GetOrder() > 1 && !plane_wave_op.Empty())
   {
     SumVectorCoefficient pfr(GetMesh().SpaceDimension()),
         pfi(GetMesh().SpaceDimension());

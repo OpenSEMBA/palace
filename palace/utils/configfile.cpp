@@ -392,6 +392,9 @@ FarfieldBoundaryData::FarfieldBoundaryData(const json &absorbing)
   attributes = absorbing.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
   order = absorbing.value("Order", order);
+  radius = absorbing.value("Radius", radius);
+  MFEM_VERIFY(radius >= 0.0, "Absorbing boundary Radius must be nonnegative!");
+  scattered_field = absorbing.value("ScatteredField", scattered_field);
 }
 
 // Defined below; used by the plane wave parser.

@@ -196,10 +196,44 @@ To extract the scattered far field and RCS, set `"Scattered"` and optionally
 For a plane wave incident on a PEC sphere, the scattered far field computed this
 way agrees with the analytic Mie series, which provides a useful validation case.
 
+### Scattered-field formulation
+
+In the default total-field formulation the incident wave is injected through the
+absorbing boundary and the scattered field is recovered by subtracting the
+analytic incident field from the total field. This requires the incident wave to
+be resolved accurately all the way to the truncation boundary, and the absorbing
+boundary reflection of the strong incident field limits the accuracy of
+low-RCS directions.
+
+Setting `"ScatteredField": true` on the `"Absorbing"` object instead solves
+directly for the scattered field. The incident wave is imposed as the tangential
+electric boundary condition `n × E_s = -n × E_inc` on the PEC boundaries, the
+absorbing boundary condition becomes homogeneous, and the far-field
+postprocessing treats the solution as the scattered field (no incident
+subtraction). This decouples the incident wave from the absorbing boundary
+(the DGTD-style TF/SF idea) and is the recommended mode for RCS validation. It
+requires PEC scatterers and a plane wave excitation.
+
+Two additional options on the `"Absorbing"` object control the absorbing
+boundary:
+
+  - `"Radius"`: radius of curvature of a spherical or circular absorbing
+    boundary centered at the origin. This activates the Bayliss-Turkel curvature
+    term `2/R` in the second-order ABC coefficient
+    `β = 1/(2ik + 2/R)`, which removes the leading-order reflection of outgoing
+    spherical waves.
+  - `"Order"`: 1 or 2.
+
+With the scattered-field formulation, a spherical boundary of radius
+`R ≈ a + 1.2λ` and second-order curved elements, the bistatic RCS of a 1 m PEC
+sphere agrees with the Mie series to **0.15–0.32 dB** (RMS/max) at `ka = 0.5`,
+`ka = 1`, `ka = 2` and `ka = 3`.
+
 !!! warning "Limitations"
 
     The accuracy of the scattered field is limited by the reflection of the
-    absorbing boundary condition. Use a second-order `"Order": 2` absorbing
+    absorbing boundary condition. Use the scattered-field formulation
+    (`"ScatteredField": true`) with a second-order `"Order": 2` absorbing
     boundary, place it sufficiently far from the scatterer, and verify
     convergence for low-RCS (deep null) directions. Perfectly matched layers are
     not yet implemented.

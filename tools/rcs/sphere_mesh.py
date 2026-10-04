@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-"""Generate a PEC sphere scattering mesh (sphere inside a box) with Gmsh.
+"""Generate a PEC sphere scattering mesh with Gmsh.
 
-A box outer boundary is used instead of a sphere: Palace's absorbing boundary
-condition drops the curvature term (it assumes an infinite radius of curvature),
-so a curved ABC boundary reflects noticeably, while the flat box faces absorb
-well. The inner surface is physical tag 2 (PEC) and the outer box faces are
-physical tag 1 (absorbing).
+The inner surface is physical tag 2 (PEC) and the outer boundary is physical
+tag 1 (absorbing). Two outer boundary shapes are available:
+
+  box    -- flat faces; no curvature term in the ABC. At normal incidence the
+            ABC is accurate, but grazing incidence on the side walls reflects.
+  sphere -- spherical boundary; use Boundaries.Absorbing.Radius = BOX_HALF in
+            the Palace config to activate the Bayliss-Turkel curvature term
+            2/R in the second-order ABC.
+
+Meshes are generated with second-order (curved) elements by default; pass
+ORDER = 1 for the straight-sided comparison arm.
 
 Usage: sphere_mesh.py OUTPUT.msh [RADIUS] [BOX_HALF] [HMIN] [HMAX] [DIST_MAX]
+                      [ORDER] [OUTER]
 """
 import sys
 import gmsh
@@ -18,13 +25,20 @@ R = float(sys.argv[3]) if len(sys.argv) > 3 else 0.6
 hmin = float(sys.argv[4]) if len(sys.argv) > 4 else 0.035
 hmax = float(sys.argv[5]) if len(sys.argv) > 5 else 0.15
 dist_max = float(sys.argv[6]) if len(sys.argv) > 6 else max(0.3, min(R - a, 2.0 * a))
+order = int(sys.argv[7]) if len(sys.argv) > 7 else 2
+outer = sys.argv[8] if len(sys.argv) > 8 else "box"
 
 gmsh.initialize()
 gmsh.model.add("sphere")
 occ = gmsh.model.occ
-box = occ.addBox(-R, -R, -R, 2 * R, 2 * R, 2 * R)
+if outer == "sphere":
+    outer_shape = occ.addSphere(0, 0, 0, R)
+elif outer == "box":
+    outer_shape = occ.addBox(-R, -R, -R, 2 * R, 2 * R, 2 * R)
+else:
+    raise SystemExit(f"Unknown outer boundary '{outer}' (use 'box' or 'sphere')")
 inner = occ.addSphere(0, 0, 0, a)
-occ.cut([(3, box)], [(3, inner)])
+occ.cut([(3, outer_shape)], [(3, inner)])
 occ.synchronize()
 
 
@@ -56,9 +70,14 @@ gmsh.model.mesh.field.setNumber(f2, "DistMax", dist_max)
 gmsh.model.mesh.field.setAsBackgroundMesh(f2)
 
 gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+gmsh.option.setNumber("Mesh.ElementOrder", order)
+if order > 1:
+    # Elastic + optimization of the high-order nodes; keeps curved elements valid.
+    gmsh.option.setNumber("Mesh.HighOrderOptimize", 2)
 gmsh.model.mesh.generate(3)
-gmsh.model.mesh.optimize("Netgen")
+if order == 1:
+    gmsh.model.mesh.optimize("Netgen")
 gmsh.write(out)
 print(f"Wrote {out}: {gmsh.model.mesh.getNodes()[0].size} nodes, "
-      f"inner {len(inner_s)}, outer {len(outer_s)}")
+      f"inner {len(inner_s)}, outer {len(outer_s)}, order {order}, outer {outer}")
 gmsh.finalize()

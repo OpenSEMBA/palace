@@ -40,6 +40,10 @@ RUN_PALACE = os.environ.get("RUN_PALACE", "0") == "1"
 NPROC = int(os.environ.get("RCS_NPROC", "16"))
 RADIUS = 1.0
 KA_VALUES = [0.5, 1.0, 2.0, 3.0]
+# Spherical absorbing boundary radius (a = 1 m, so ~1.2 wavelengths at ka = 1). The
+# scattered-field formulation keeps the incident wave off the absorbing boundary, so a
+# modest clearance is sufficient.
+R_BOUNDARY = 7.283185307
 WORKDIR.mkdir(parents=True, exist_ok=True)
 FIGDIR.mkdir(parents=True, exist_ok=True)
 
@@ -52,11 +56,18 @@ def make_config(case, f_hz):
         "Domains": {"Materials": [{"Attributes": [1]}]},
         "Boundaries": {
             "PEC": {"Attributes": [2]},
-            "Absorbing": {"Attributes": [1], "Order": 2},
+            # Scattered-field formulation: homogeneous ABC, incident wave imposed on the
+            # PEC sphere; the spherical boundary activates the Bayliss-Turkel curvature
+            # term 2/R.
+            "Absorbing": {"Attributes": [1], "Order": 2, "Radius": R_BOUNDARY,
+                          "ScatteredField": True},
+            # The phasor exp(-i k·x) propagates along +Direction; -z matches the Mie
+            # reference incidence and puts the monostatic return at theta = 0.
             "PlaneWave": [{"Index": 1, "Attributes": [1], "Excitation": 1,
-                           "Direction": [0.0, 0.0, 1.0],
+                           "Direction": [0.0, 0.0, -1.0],
                            "Polarization": [1.0, 0.0, 0.0], "Amplitude": 1.0}],
-            "Postprocessing": {"FarField": {"Attributes": [1], "ThetaPhis": [[0, 0]],
+            "Postprocessing": {"FarField": {"Attributes": [1],
+                                            "ThetaPhis": [[t, 0] for t in range(0, 181, 15)],
                                             "Scattered": True, "Monostatic": True}},
         },
         "Solver": {"Order": 2, "Driven": {"Samples": [{"Type": "Point",
@@ -76,15 +87,15 @@ if RUN_PALACE:
         d.mkdir(exist_ok=True)
         f = ka * C0 / (2.0 * np.pi * RADIUS)
         lam = C0 / f
-        # Box outer boundary (Palace's ABC ignores the boundary curvature term,
-        # so a curved boundary reflects; flat box faces absorb well).
-        R = 3.77
-        hmin = min(0.22, lam / 20.0)
-        hmax = min(0.94, lam / 10.0)
-        dmax = 2.83
+        # Spherical outer boundary with the Bayliss-Turkel curvature term (Radius in the
+        # config) and second-order curved elements.
+        R = R_BOUNDARY
+        hmin = min(0.167, lam / 20.0)
+        hmax = min(0.63, lam / 10.0)
+        dmax = min(2.5, lam)
         subprocess.run([sys.executable, str(TOOLS / "sphere_mesh.py"), "sphere.msh",
-                        str(RADIUS), str(R), str(hmin), str(hmax), str(dmax)],
-                       cwd=d, check=True)
+                        str(RADIUS), str(R), str(hmin), str(hmax), str(dmax), "2",
+                        "sphere"], cwd=d, check=True)
         make_config(case, f)
         subprocess.run([PALACE, "-np", str(NPROC), f"{case}.json"], cwd=d, check=True)
 
@@ -92,7 +103,7 @@ if RUN_PALACE:
 # ## Extract the monostatic values
 
 # %%
-def read_monostatic(case):
+def read_pattern(case):
     path = WORKDIR / case / "postpro" / case / "farfield-rcs.csv"
     if not path.exists():
         return None
@@ -102,26 +113,39 @@ def read_monostatic(case):
     it = header.index("theta (deg.)")
     ip = header.index("phi (deg.)")
     ir = header.index("RCS (m^2)")
+    th, sig = [], []
     for row in rows[1:]:
-        # With the far-field kernel convention used by Palace's Stratton-Chu
-        # implementation, the incident phasor exp(-i k k_hat.x) propagates
-        # along -k_hat, so for Direction=+z the backscatter (monostatic)
-        # direction is theta = 0.
-        if abs(float(row[it])) < 1e-6:
-            return float(row[ir])
-    return None
+        if abs(float(row[ip])) < 1e-6:
+            th.append(float(row[it]))
+            sig.append(float(row[ir]))
+    th = np.array(th)
+    sig = np.array(sig)
+    order = np.argsort(th)
+    return th[order], sig[order]
 
 
 results = []
 for ka in KA_VALUES:
-    sigma = read_monostatic(f"ka_{ka}")
-    mie = float(monostatic_normalized([ka])[0]) * np.pi * RADIUS**2
-    if sigma is None:
+    case = f"ka_{ka}"
+    pat = read_pattern(case)
+    if pat is None:
         print(f"ka={ka}: no output")
         continue
-    results.append((ka, sigma, mie, 10 * np.log10(sigma / mie)))
-    print(f"ka={ka:4.1f}  Palace {10*np.log10(sigma):8.3f} dBsm  "
-          f"Mie {10*np.log10(mie):8.3f} dBsm  err {results[-1][3]:+6.2f} dB")
+    th, sig = pat
+    # Direction = -z matches the Mie reference incidence, so Palace(theta) compares
+    # directly with Mie(theta); the monostatic return is at theta = 0.
+    f_hz = ka * C0 / (2.0 * np.pi * RADIUS)
+    et, ep = mie_pec(RADIUS, f_hz, np.radians(th), [0.0])
+    msig = np.abs(et) ** 2
+    err_db = 10 * np.log10(sig) - 10 * np.log10(msig)
+    sigma = sig[int(np.argmin(np.abs(th)))]
+    mie = float(monostatic_normalized([ka])[0]) * np.pi * RADIUS**2
+    rms = float(np.sqrt(np.mean(err_db**2)))
+    mx = float(np.max(np.abs(err_db)))
+    results.append((ka, sigma, mie, 10 * np.log10(sigma / mie), rms, mx))
+    print(f"ka={ka:4.1f}  monostatic Palace {10*np.log10(sigma):8.3f} dBsm  "
+          f"Mie {10*np.log10(mie):8.3f} dBsm  err {results[-1][3]:+5.2f} dB  |  "
+          f"pattern RMS {rms:.2f} dB, max {mx:.2f} dB")
 
 # %% [markdown]
 # ## Mie curve and Palace points
@@ -133,8 +157,10 @@ mie_curve = monostatic_normalized(ka_curve)
 fig, ax = plt.subplots(figsize=(8.5, 5.5))
 ax.loglog(ka_curve, mie_curve, color="#1f77b4", lw=1.8, label="Mie theory")
 if results:
+    rms_mean = float(np.mean([r[4] for r in results]))
     ax.loglog([r[0] for r in results], [r[1] / (np.pi * RADIUS**2) for r in results],
-              "o", ms=7, color="#d62728", label="Palace (1 m PEC sphere)")
+              "o", ms=7, color="#d62728",
+              label=f"Palace scattered-field (pattern RMS {rms_mean:.2f} dB)")
 ax.axhline(1.0, color="0.4", lw=1.0, ls=":")
 ax.set_xlim(0.1, 10.0)
 ax.set_ylim(1.0e-2, 10.0)
@@ -150,6 +176,8 @@ print(f"Wrote {FIGDIR / 'sphere_monostatic_palace_vs_mie.png'}")
 # %%
 # Error table for the report.
 if results:
-    print(f"{'ka':>5} {'Palace (dBsm)':>14} {'Mie (dBsm)':>12} {'error (dB)':>11}")
-    for ka, sigma, mie, err in results:
-        print(f"{ka:5.1f} {10*np.log10(sigma):14.3f} {10*np.log10(mie):12.3f} {err:11.2f}")
+    print(f"{'ka':>5} {'Palace (dBsm)':>14} {'Mie (dBsm)':>12} {'mono err':>9} "
+          f"{'RMS':>7} {'max':>7}")
+    for ka, sigma, mie, err, rms, mx in results:
+        print(f"{ka:5.1f} {10*np.log10(sigma):14.3f} {10*np.log10(mie):12.3f} "
+              f"{err:9.2f} {rms:7.2f} {mx:7.2f}")
