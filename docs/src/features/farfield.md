@@ -206,13 +206,24 @@ boundary reflection of the strong incident field limits the accuracy of
 low-RCS directions.
 
 Setting `"ScatteredField": true` on the `"Absorbing"` object instead solves
-directly for the scattered field. The incident wave is imposed as the tangential
-electric boundary condition `n × E_s = -n × E_inc` on the PEC boundaries, the
-absorbing boundary condition becomes homogeneous, and the far-field
+directly for the scattered field. The incident wave enters through the PEC
+boundary condition `n × E_s = -n × E_inc` and, in penetrable (dielectric)
+regions, through the volume contrast sources
+
+```
+ω² ∫ (ε_eff − ε₀) E_inc · v dV ,
+```
+
+with `ε_eff = ε_r + i(ε_imag − σ/ω)` the same complex relative permittivity used
+by the system matrix (`ε_imag = −ε_r tan δ`), evaluated at the driving frequency
+and with the incident field taken in the free-space background medium. The
+absorbing boundary condition becomes homogeneous and the far-field
 postprocessing treats the solution as the scattered field (no incident
 subtraction). This decouples the incident wave from the absorbing boundary
 (the DGTD-style TF/SF idea) and is the recommended mode for RCS validation. It
-requires PEC scatterers and a plane wave excitation.
+supports PEC boundaries and nonmagnetic dielectric regions (lossless or lossy);
+magnetic contrast (`μ ≠ μ₀`) and dispersive material models are not yet
+included. A plane wave excitation is required.
 
 Two additional options on the `"Absorbing"` object control the absorbing
 boundary:
