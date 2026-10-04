@@ -30,7 +30,7 @@ matplotlib.rcParams.update({"figure.dpi": 110, "font.size": 10})
 TOOLS = Path(__file__).resolve().parents[1] if "__file__" in globals() else Path(
     "/home/luis/palace/tools/rcs")
 sys.path.insert(0, str(TOOLS))
-from mie_pec import monostatic_normalized  # noqa: E402
+from mie_pec import mie_pec, monostatic_normalized  # noqa: E402
 
 C0 = 299792458.0
 PALACE = os.environ.get("PALACE_BIN", "/home/luis/palace/build/bin/palace")
@@ -90,9 +90,9 @@ if RUN_PALACE:
         # Spherical outer boundary with the Bayliss-Turkel curvature term (Radius in the
         # config) and second-order curved elements.
         R = R_BOUNDARY
-        hmin = min(0.167, lam / 20.0)
-        hmax = min(0.63, lam / 10.0)
-        dmax = min(2.5, lam)
+        hmin = min(0.167, lam / 16.0)
+        hmax = min(0.63, lam / 8.0)
+        dmax = min(2.5, 0.75 * lam)
         subprocess.run([sys.executable, str(TOOLS / "sphere_mesh.py"), "sphere.msh",
                         str(RADIUS), str(R), str(hmin), str(hmax), str(dmax), "2",
                         "sphere"], cwd=d, check=True)

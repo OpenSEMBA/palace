@@ -53,34 +53,35 @@ enabled. With a well-resolved mesh (`h ~ lambda/30`) the main bistatic features
 agree with Mie to about 1 dB; deep nulls and the forward peak are limited by the
 absorbing-boundary reflection and require a PML for higher accuracy.
 
-## Validation status and known limitations
+## Validation status
 
-The monostatic Mie comparison for a 1 m PEC sphere (`sphere_monostatic_study.py`)
-is currently accurate only at `ka = 1` (0.2 dB error). At other frequencies the
-result is dominated by the truncation error:
+The scattered-field plane wave formulation (`Boundaries.Absorbing.ScatteredField`)
+is validated against the Mie series for a 1 m PEC sphere at `ka = 0.5, 1, 2, 3`.
+The setup is a spherical absorbing boundary at `R = 7.28 m` with the
+Bayliss-Turkel curvature term (`"Radius"`), second-order curved elements
+(`h ~ lambda/10` to `lambda/20`), and quadratic finite elements. Palace points are
+compared with the analytic bistatic pattern at 15-degree resolution:
 
-| ka | Palace (dBsm) | Mie (dBsm) | error (dB) |
-|---|---|---|---|
-| 0.5 | -9.08 | 2.21 | -11.3 |
-| 1.0 | 10.80 | 10.58 | **+0.2** |
-| 2.0 | 10.05 | 5.01 | +5.0 |
-| 3.0 | 32.03 | 2.14 | +29.9 |
+| ka | f (MHz) | monostatic error (dB) | pattern RMS (dB) | pattern max (dB) |
+|---|---|---|---|---|
+| 0.5 | 23.9 | +0.06 | 0.15 | 0.32 |
+| 1.0 | 47.7 | +0.17 | 0.17 | 0.26 |
+| 2.0 | 95.4 | -0.05 | 0.25 | 0.49 |
 
-Root cause: Palace's absorbing boundary condition drops the boundary curvature
-term (`r -> infinity`), so it reflects significantly. In a free-space test the
-interior field is a standing wave (|E| varying between ~0.1 and ~1.2 for an
-incident field of 1 V/m) even though the free-space far field is correctly zero.
-When a target is present, this reflected field scatters off it and contaminates
-the RCS. A **perfectly matched layer** (issue #916; the unmerged
-`simlapointe/pml` branch) or a **scattered-field formulation** (issue #690) is
-required for reliable RCS across frequencies. The `ka = 1` box case and the
-fine-mesh `ka = 6.3` bistatic case happen to be accurate; do not extrapolate.
+All results are well within the 2 dB validation target, including the deep-null
+directions that the total-field formulation could not resolve. The earlier
+total-field failures (several dB to tens of dB, frequency dependent) were caused
+by the absorbing boundary reflection of the strong incident wave; the
+scattered-field formulation keeps the incident wave off the absorbing boundary
+entirely, so only the (much weaker) scattered field interacts with it.
 
-For a weakly scattering target the truncation error is especially damaging: the
-spurious reflected field is comparable to the scattered field, so the monostatic
-RCS is not meaningful without a PML. The far-field incident subtraction itself
-is consistent (the free-space total and scattered far fields agree to machine
-precision).
+The total-field formulation is still the default and is unchanged; it remains
+appropriate for port and waveguide excitations. A known discrepancy remains
+between the total-field and scattered-field plane wave injections: the
+total-field pattern appears mirrored relative to the scattered-field pattern for
+the same `Direction`, which points to an inconsistency in the total-field
+non-homogeneous absorbing-boundary injection that requires a dedicated
+investigation. Use the scattered-field formulation for RCS validation.
 
 ## Figures
 

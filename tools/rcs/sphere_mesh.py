@@ -16,6 +16,7 @@ ORDER = 1 for the straight-sided comparison arm.
 Usage: sphere_mesh.py OUTPUT.msh [RADIUS] [BOX_HALF] [HMIN] [HMAX] [DIST_MAX]
                       [ORDER] [OUTER]
 """
+import os
 import sys
 import gmsh
 
@@ -27,6 +28,9 @@ hmax = float(sys.argv[5]) if len(sys.argv) > 5 else 0.15
 dist_max = float(sys.argv[6]) if len(sys.argv) > 6 else max(0.3, min(R - a, 2.0 * a))
 order = int(sys.argv[7]) if len(sys.argv) > 7 else 2
 outer = sys.argv[8] if len(sys.argv) > 8 else "box"
+# 0 = none, 1 = optimization, 2 = elastic + optimization, 3 = elastic + untangling.
+# The elastic solve (2) is expensive for large meshes; use 1 for quick iteration.
+ho_opt = int(os.environ.get("GMSH_HIGH_ORDER_OPTIMIZE", "2"))
 
 gmsh.initialize()
 gmsh.model.add("sphere")
@@ -73,7 +77,7 @@ gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
 gmsh.option.setNumber("Mesh.ElementOrder", order)
 if order > 1:
     # Elastic + optimization of the high-order nodes; keeps curved elements valid.
-    gmsh.option.setNumber("Mesh.HighOrderOptimize", 2)
+    gmsh.option.setNumber("Mesh.HighOrderOptimize", ho_opt)
 gmsh.model.mesh.generate(3)
 if order == 1:
     gmsh.model.mesh.optimize("Netgen")
