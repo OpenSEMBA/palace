@@ -44,20 +44,31 @@ WORKDIR = Path(os.environ.get("RCS_WORKDIR", "./almond_work")).resolve()
 FIGDIR = WORKDIR / "figures"
 RUN_PALACE = os.environ.get("RUN_PALACE", "0") == "1"
 NPROC = int(os.environ.get("RCS_NPROC", "8"))
-FREQ_GHZ = float(os.environ.get("ALMOND_FREQ_GHZ", "1.19"))
-OUTER_RADIUS = float(os.environ.get("ALMOND_OUTER_R", "0.8"))
-REFERENCE_CSV = Path(os.environ.get("RCS_ALMOND_REFERENCE",
-                                    str(WORKDIR / "reference_almond.csv")))
+FREQ_GHZ = float(os.environ.get("ALMOND_FREQ_GHZ", "3.5"))
+OUTER_RADIUS = float(os.environ.get("ALMOND_OUTER_R", "0.35"))
+_ref_default = {
+    3.5: "almond_austin_3p5GHz.csv",
+    5.12: "almond_austin_5p12GHz.csv",
+    7.0: "almond_austin_7GHz.csv",
+    10.25: "almond_austin_10p25GHz.csv",
+}.get(FREQ_GHZ, "reference_almond.csv")
+REFERENCE_CSV = Path(os.environ.get(
+    "RCS_ALMOND_REFERENCE", str(TOOLS / "reference" / _ref_default)))
 WORKDIR.mkdir(parents=True, exist_ok=True)
 FIGDIR.mkdir(parents=True, exist_ok=True)
 
-# Resolution levels: (name, h at the almond surface, h far).
+# Resolution levels scaled with the wavelength: (name, h at the almond surface,
+# h far). L1 is lambda/17, L2 lambda/28, L3 lambda/50 near the surface.
+_LAM = 299792458.0 / (FREQ_GHZ * 1e9)
 RESOLUTIONS = {
-    "L1": (0.015, 0.050),
-    "L2": (0.009, 0.035),
-    "L3": (0.005, 0.022),
+    "L1": (_LAM / 17.0, _LAM / 5.0),
+    "L2": (_LAM / 28.0, _LAM / 8.0),
+    "L3": (_LAM / 50.0, _LAM / 12.0),
 }
-AZIMUTHS = [0.0, 45.0, 90.0, 135.0, 180.0]  # tip, ..., broadside, ..., tail
+AZIMUTHS = list(range(0, 181, int(os.environ.get("ALMOND_AZIMUTH_STEP", "30"))))
+if os.environ.get("ALMOND_RESOLUTIONS"):
+    _keep = set(os.environ["ALMOND_RESOLUTIONS"].split(","))
+    RESOLUTIONS = {k: v for k, v in RESOLUTIONS.items() if k in _keep}
 
 
 def make_config(case, mesh):
@@ -99,7 +110,7 @@ def make_config(case, mesh):
 # %%
 if RUN_PALACE:
     for case, (hmin, hmax) in RESOLUTIONS.items():
-        dmax = max(0.3, OUTER_RADIUS - 0.2523744)
+        dmax = min(max(0.3, OUTER_RADIUS - 0.2523744), 0.75 * _LAM)
         subprocess.run([sys.executable, str(TOOLS / "almond_mesh.py"), f"{case}.msh",
                         str(OUTER_RADIUS), str(hmin), str(hmax), str(dmax), "2"],
                        cwd=WORKDIR, check=True)

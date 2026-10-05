@@ -19,6 +19,7 @@ import csv
 import os
 import subprocess
 import sys
+import gmsh
 from pathlib import Path
 
 import numpy as np
@@ -36,10 +37,10 @@ C0 = 299792458.0
 PALACE = os.environ.get("PALACE_BIN", "/home/luis/palace/build/bin/palace")
 WORKDIR = Path(os.environ.get("RCS_WORKDIR", "./mono_study")).resolve()
 FIGDIR = WORKDIR / "figures"
-RUN_PALACE = os.environ.get("RUN_PALACE", "0") == "1"
+MPI_LAUNCHER = os.environ.get("MPI_LAUNCHER", "/usr/local/bin/mpirun")
 NPROC = int(os.environ.get("RCS_NPROC", "16"))
 RADIUS = 1.0
-KA_VALUES = [0.5, 1.0, 2.0, 3.0]
+KA_VALUES = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
 # Spherical absorbing boundary radius (a = 1 m, so ~1.2 wavelengths at ka = 1). The
 # scattered-field formulation keeps the incident wave off the absorbing boundary, so a
 # modest clearance is sufficient.
@@ -51,7 +52,8 @@ FIGDIR.mkdir(parents=True, exist_ok=True)
 def make_config(case, f_hz):
     import json
     cfg = {
-        "Problem": {"Type": "Driven", "Verbose": 1, "Output": f"postpro/{case}"},
+        "Problem": {"Type": "Driven", "Verbose": 1, "Output": f"postpro/{case}",
+                    "OutputFormats": {"Paraview": True}},
         "Model": {"Mesh": "sphere.msh", "L0": 1.0},
         "Domains": {"Materials": [{"Attributes": [1]}]},
         "Boundaries": {
@@ -75,7 +77,8 @@ def make_config(case, f_hz):
                    # default 100 to reach 1e-6 at these problem sizes.
                    "Linear": {"Type": "Default", "KSPType": "GMRES", "Tol": 1.0e-6,
                               "MaxIts": 600, "InitialGuess": True},
-                   "Driven": {"Samples": [{"Type": "Point", "Freq": [f_hz / 1e9]}]}},
+                   "Driven": {"Samples": [{"Type": "Point", "Freq": [f_hz / 1e9]}],
+                              "SaveStep": 1}},
     }
     (WORKDIR / case / f"{case}.json").write_text(json.dumps(cfg, indent=1))
 
@@ -84,24 +87,24 @@ def make_config(case, f_hz):
 # ## Run the study (optional)
 
 # %%
-if RUN_PALACE:
-    for ka in KA_VALUES:
-        case = f"ka_{ka}"
-        d = WORKDIR / case
-        d.mkdir(exist_ok=True)
-        f = ka * C0 / (2.0 * np.pi * RADIUS)
-        lam = C0 / f
-        # Spherical outer boundary with the Bayliss-Turkel curvature term (Radius in the
-        # config) and second-order curved elements.
-        R = R_BOUNDARY
-        hmin = min(0.167, lam / 16.0)
-        hmax = min(0.63, lam / 8.0)
-        dmax = min(2.5, 0.75 * lam)
-        subprocess.run([sys.executable, str(TOOLS / "sphere_mesh.py"), "sphere.msh",
-                        str(RADIUS), str(R), str(hmin), str(hmax), str(dmax), "2",
-                        "sphere"], cwd=d, check=True)
-        make_config(case, f)
-        subprocess.run([PALACE, "-np", str(NPROC), f"{case}.json"], cwd=d, check=True)
+for ka in KA_VALUES:
+    case = f"ka_{ka}"
+    d = WORKDIR / case
+    d.mkdir(exist_ok=True)
+    f = ka * C0 / (2.0 * np.pi * RADIUS)
+    lam = C0 / f
+    # Spherical outer boundary with the Bayliss-Turkel curvature term (Radius in the
+    # config) and second-order curved elements.
+    R = R_BOUNDARY
+    hmin = min(0.167, lam / 16.0)
+    hmax = min(0.63, lam / 8.0)
+    dmax = min(2.5, 0.75 * lam)
+    subprocess.run([sys.executable, str(TOOLS / "sphere_mesh.py"), "sphere.msh",
+                    str(RADIUS), str(R), str(hmin), str(hmax), str(dmax), "2",
+                    "sphere"], cwd=d, check=True)
+    make_config(case, f)
+    subprocess.run([PALACE, "-np", str(NPROC), "-launcher", MPI_LAUNCHER,
+                    f"{case}.json"], cwd=d, check=True)
 
 # %% [markdown]
 # ## Extract the monostatic values
@@ -185,3 +188,5 @@ if results:
     for ka, sigma, mie, err, rms, mx in results:
         print(f"{ka:5.1f} {10*np.log10(sigma):14.3f} {10*np.log10(mie):12.3f} "
               f"{err:9.2f} {rms:7.2f} {mx:7.2f}")
+
+# %%
