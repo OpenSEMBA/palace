@@ -1,0 +1,22 @@
+{
+    "Problem": { "Type": "Driven", "Verbose": 0, "Output": "postpro/planewave_cylinder" },
+    "Model": { "Mesh": "mesh/cylinder.msh", "L0": 1.0 },
+    "Domains": { "Materials": [ { "Attributes": [1] } ] },
+    "Boundaries": {
+        "PEC": { "Attributes": [2] },
+        "Absorbing": { "Attributes": [1], "Order": 1 },
+        "PlaneWave": [
+            { "Index": 1, "Attributes": [1], "Excitation": 1,
+              "Direction": [-1.0, 0.0, 0.0], "Polarization": [0.0, 1.0, 0.0],
+              "Amplitude": 1.0 }
+        ],
+        "Postprocessing": {
+            "FarField": { "Attributes": [1],
+                          "ThetaPhis": [[90,0],[90,45],[90,90],[90,135],[90,180],
+                                        [90,225],[90,270],[90,315]],
+                          "Monostatic": true }
+        }
+    },
+    "Solver": { "Order": 2,
+        "Driven": { "Samples": [ { "Type": "Point", "Freq": [0.0954269] } ] } }
+}

@@ -193,6 +193,13 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       // Solve linear system.
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
+      if (space_op.GetPlaneWaveOp().GetExcitationWave(excitation_idx))
+      {
+        // Plane wave scattered-field excitation: assemble the dielectric volume contrast
+        // sources and impose n × E_s = -n × E_inc on the PEC boundaries (eliminated from
+        // the RHS).
+        space_op.AddPlaneWaveExcitationVector(*A, excitation_idx, omega, RHS);
+      }
 
       Mpi::Print("\n");
       ksp.Mult(RHS, E);

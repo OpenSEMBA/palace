@@ -459,6 +459,37 @@ void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
   }
 }
 
+void ComplexParOperator::EliminateRHS(const ComplexVector &x, ComplexVector &b) const
+{
+  MFEM_VERIFY(A, "No local matrix available for ComplexParOperator::EliminateRHS!");
+  // Note: dbc_tdof_list may be empty on ranks with no constrained true dofs; the
+  // elimination below is then a no-op on those ranks.
+  auto &lx = trial_fespace.GetLVector<ComplexVector>();
+  auto &ly = GetTestLVector();
+  {
+    auto &tx = trial_fespace.GetTVector<ComplexVector>();
+    tx = 0.0;
+    linalg::SetSubVector(tx, dbc_tdof_list, x);
+    trial_fespace.GetProlongationMatrix()->Mult(tx.Real(), lx.Real());
+    trial_fespace.GetProlongationMatrix()->Mult(tx.Imag(), lx.Imag());
+  }
+
+  // Apply the unconstrained operator.
+  A->Mult(lx, ly);
+
+  auto &ty = test_fespace.GetTVector<ComplexVector>();
+  RestrictionMatrixMult(ly, ty);
+  b.Add(-1.0, ty);
+  if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
+  {
+    linalg::SetSubVector(b, dbc_tdof_list, x);
+  }
+  else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)
+  {
+    linalg::SetSubVector(b, dbc_tdof_list, 0.0);
+  }
+}
+
 Operator::DiagonalPolicy ComplexParOperator::GetDiagonalPolicy() const
 {
   MFEM_VERIFY(dbc_tdof_list.Size() > 0,

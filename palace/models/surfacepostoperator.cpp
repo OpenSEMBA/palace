@@ -10,6 +10,7 @@
 #include "fem/integrator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/planewaveoperator.hpp"
 #include "models/strattonchu.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -210,7 +211,7 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
 SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &data,
                                                 const mfem::ParMesh &mesh,
                                                 const mfem::Array<int> &bdr_attr_marker)
-  : thetaphis(data.thetaphis)
+  : thetaphis(data.thetaphis), monostatic(data.monostatic)
 {
   // Store boundary attributes for this postprocessing boundary.
   attr_list = SetUpBoundaryProperties(data, bdr_attr_marker);
@@ -425,8 +426,19 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
 {
   if (theta_phi_pairs.empty())
     return {};
-  MFEM_VERIFY(nd_fespace.GetParMesh()->SpaceDimension() == 3,
-              "Far-field computation is only available for 3D simulations!");
+  const auto &mesh = *nd_fespace.GetParMesh();
+  const bool is_2d = (mesh.SpaceDimension() == 2);
+  MFEM_VERIFY(is_2d || mesh.SpaceDimension() == 3,
+              "Far-field computation is only available for 2D and 3D simulations!");
+  if (is_2d)
+  {
+    for (const auto &[theta, phi] : theta_phi_pairs)
+    {
+      MFEM_VERIFY(std::abs(theta - M_PI_2) < 1.0e-8,
+                  "2D far-field evaluation requires theta = pi/2, but got theta = "
+                      << theta * 180.0 / M_PI << " degrees!");
+    }
+  }
   BlockTimer bt0(Timer::POSTPRO_FARFIELD);
 
   // Compute target unit vectors from the given theta and phis.
@@ -438,14 +450,14 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
         std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi), std::cos(theta)});
   }
 
-  const auto &mesh = *nd_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, farfield.attr_list);
 
   // Use the libCEED surface functional path when supported, avoiding per-point host
   // coefficient evaluation in the MFEM path. Observation directions are part of the
   // assembled operator and must therefore invalidate the cached functional when changed.
-  const bool use_ceed = E.HasImag() && B.HasImag();
+  // The surface-flux kernels are 3D-only, so 2D always uses the host path.
+  const bool use_ceed = E.HasImag() && B.HasImag() && !is_2d;
   if (use_ceed && (!farfield_func || farfield_func_dirs != r_naughts))
   {
     farfield_func = std::make_unique<SurfaceFunctional>(
@@ -478,8 +490,16 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
     const auto *ir =
         &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
 
-    AddStrattonChuIntegrandAtElement(E, B, mat_op, omega.real(), omega.imag(), r_naughts,
-                                     *T, *ir, integrals_r, integrals_i);
+    if (is_2d)
+    {
+      AddStrattonChuIntegrand2DAtElement(E, B, omega.real(), r_naughts, *T, *ir,
+                                         integrals_r, integrals_i);
+    }
+    else
+    {
+      AddStrattonChuIntegrandAtElement(E, B, mat_op, omega.real(), omega.imag(), r_naughts,
+                                       *T, *ir, integrals_r, integrals_i);
+    }
   }
 
   double *data_r_ptr = integrals_r.data()->data();
@@ -488,9 +508,21 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   Mpi::GlobalSum(total_elements, data_i_ptr, E.GetComm());
   Mpi::GlobalSum(total_elements, data_r_ptr, E.GetComm());
 
-  // Finally, we apply cross product to reduced integrals and package the result
-  // in a neatly accessible vector of arrays of complex numbers.
+  // Finally, package the result in a neatly accessible vector of arrays of complex
+  // numbers. In 3D we apply the observation-direction cross product to the reduced
+  // integrals; in 2D the equivalence-principle integrand already is the in-plane
+  // far-field amplitude.
   std::vector<std::array<std::complex<double>, 3>> result(theta_phi_pairs.size());
+  if (is_2d)
+  {
+    for (std::size_t k = 0; k < theta_phi_pairs.size(); k++)
+    {
+      result[k][0] = std::complex<double>{integrals_r[k][0], integrals_i[k][0]};
+      result[k][1] = std::complex<double>{integrals_r[k][1], integrals_i[k][1]};
+      result[k][2] = 0.0;
+    }
+    return result;
+  }
   StaticVector<3> tmp_r, tmp_i;
   for (std::size_t k = 0; k < theta_phi_pairs.size(); k++)
   {

@@ -19,6 +19,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added incident plane wave excitation for frequency-domain driven simulations using a
+    scattered-field formulation. A `Boundaries.PlaneWave` source imposes the incident field
+    as a tangential electric boundary condition on PEC surfaces and as volume contrast
+    sources in dielectric regions, while the absorbing boundary condition is homogeneous.
+    `Boundaries.Postprocessing.FarField` writes the scattered far field and a
+    `farfield-rcs.csv` RCS table, with optional `Monostatic` backscatter rows; in 2D the
+    equivalence-principle line integral reports the scattering width in place of the 3D
+    RCS. The `Absorbing` boundary also gains a `Radius` option activating the
+    Bayliss-Turkel curvature term for spherical or circular boundaries. New examples
+    compare the PEC sphere, lossy Debye sphere and 2D PEC cylinder results against the Mie
+    series. SchemaVer 2-2-0
+    [PR NNN](https://github.com/awslabs/palace/pull/NNN).
   - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
     `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
     `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly

@@ -72,6 +72,7 @@ private:
   struct FarFieldData : public SurfaceData
   {
     std::vector<std::pair<double, double>> thetaphis;
+    bool monostatic = false;
 
     FarFieldData() = default;
     FarFieldData(const config::FarFieldPostData &data, const mfem::ParMesh &mesh,
@@ -119,7 +120,8 @@ public:
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,
                                       const GridFunction *B) const;
 
-  // Batch version for multiple theta/phi pairs
+  // Batch version for multiple theta/phi pairs, returning the far field of the solution
+  // (the scattered field in the scattered-field plane wave formulation).
   std::vector<std::array<std::complex<double>, 3>>
   GetFarFieldrE(const std::vector<std::pair<double, double>> &theta_phi_pairs,
                 const GridFunction &E, const GridFunction &B,

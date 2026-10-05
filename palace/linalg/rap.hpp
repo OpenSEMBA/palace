@@ -194,6 +194,13 @@ public:
   void SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
                             Operator::DiagonalPolicy policy);
 
+  // Eliminate essential boundary conditions with prescribed nonzero true-dof values:
+  // b -= A x_ext, where x_ext is the extension of x (defined at the constrained true
+  // dofs) to the full space, followed by setting b at the constrained dofs according to
+  // the diagonal policy. Used for non-homogeneous Dirichlet data (e.g. the scattered-field
+  // plane wave boundary condition on PEC surfaces).
+  void EliminateRHS(const ComplexVector &x, ComplexVector &b) const;
+
   // Get the essential boundary condition true dofs associated with the operator. May be
   // nullptr.
   const mfem::Array<int> *GetEssentialTrueDofs() const

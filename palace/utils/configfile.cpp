@@ -393,6 +393,60 @@ FarfieldBoundaryData::FarfieldBoundaryData(const json &absorbing)
   attributes = absorbing.at("Attributes").get<std::vector<int>>();  // Required
   std::ranges::sort(attributes);
   order = absorbing.value("Order", order);
+  radius = absorbing.value("Radius", radius);
+  MFEM_VERIFY(radius >= 0.0, "Absorbing boundary Radius must be nonnegative!");
+}
+
+// Defined below; used by the plane wave parser.
+int ParsePortExcitation(const json &port, int index);
+
+PlaneWaveData::PlaneWaveData(const json &wave)
+{
+  int index = wave.at("Index");                                // Required
+  attributes = wave.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  excitation = ParsePortExcitation(wave, index);
+  direction = wave.at("Direction").get<std::array<double, 3>>();  // Required
+  polarization = wave.value("Polarization", polarization);
+  amplitude = wave.value("Amplitude", amplitude);
+  phase = wave.value("Phase", phase);
+  origin = wave.value("ReferencePoint", origin);
+
+  // Normalize the propagation direction.
+  double norm = 0.0;
+  for (double x : direction)
+  {
+    MFEM_VERIFY(std::isfinite(x), "Plane wave \"Direction\" must contain finite values!");
+    norm += x * x;
+  }
+  MFEM_VERIFY(norm > 0.0, "Plane wave \"Direction\" must be nonzero!");
+  norm = std::sqrt(norm);
+  for (double &x : direction)
+  {
+    x /= norm;
+  }
+
+  // Normalize the polarization and require it to be orthogonal to the propagation
+  // direction.
+  norm = 0.0;
+  for (double x : polarization)
+  {
+    MFEM_VERIFY(std::isfinite(x),
+                "Plane wave \"Polarization\" must contain finite values!");
+    norm += x * x;
+  }
+  MFEM_VERIFY(norm > 0.0, "Plane wave \"Polarization\" must be nonzero!");
+  norm = std::sqrt(norm);
+  for (double &x : polarization)
+  {
+    x /= norm;
+  }
+  const double dot = direction[0] * polarization[0] + direction[1] * polarization[1] +
+                     direction[2] * polarization[2];
+  MFEM_VERIFY(std::abs(dot) < 1.0e-6,
+              "Plane wave \"Polarization\" must be orthogonal to \"Direction\"!");
+
+  MFEM_VERIFY(amplitude > 0.0, "Plane wave \"Amplitude\" must be positive!");
 }
 
 ConductivityData::ConductivityData(const json &boundary)
@@ -771,6 +825,7 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
 {
   attributes = farfield.at("Attributes").get<std::vector<int>>();  // Required
   std::ranges::sort(attributes);
+  monostatic = farfield.value("Monostatic", monostatic);
 
   // Generate NSample points with the following properties:
   // - If NSample >= 2, the generated points are precisely NSample, otherwise NSample = 2.
@@ -1019,6 +1074,7 @@ BoundaryData::BoundaryData(const json &boundaries)
 
   auxpec = ParseOptional<WavePortPecBoundaryData>(boundaries, "WavePortPEC");
   farfield = ParseOptional<FarfieldBoundaryData>(boundaries, "Absorbing");
+  planewave = ParseOptionalMap<PlaneWaveData>(boundaries, "PlaneWave", "\"PlaneWave\"");
   conductivity = ParseOptionalVector<ConductivityData>(boundaries, "Conductivity");
   impedance = ParseOptionalVector<ImpedanceData>(boundaries, "Impedance");
   rational_impedance =
@@ -1095,6 +1151,10 @@ BoundaryData::BoundaryData(const json &boundaries)
   attributes.insert(attributes.end(), auxpec.attributes.begin(), auxpec.attributes.end());
   attributes.insert(attributes.end(), farfield.attributes.begin(),
                     farfield.attributes.end());
+  for (const auto &[idx, data] : planewave)
+  {
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
+  }
   for (const auto &data : conductivity)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
@@ -1750,6 +1810,15 @@ void Nondimensionalize(const Units &units, PeriodicBoundaryData &data)
   for (auto &k : data.wave_vector)
   {
     k *= units.GetMeshLengthRelativeScale();
+  }
+}
+
+void Nondimensionalize(const Units &units, PlaneWaveData &data)
+{
+  data.amplitude = units.Nondimensionalize<Units::ValueType::FIELD_E>(data.amplitude);
+  for (auto &x : data.origin)
+  {
+    x /= units.GetMeshLengthRelativeScale();
   }
 }
 

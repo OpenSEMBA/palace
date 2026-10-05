@@ -168,4 +168,90 @@ void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction 
   }
 }
 
+void AddStrattonChuIntegrand2DAtElement(const GridFunction &E, const GridFunction &B,
+                                        double omega,
+                                        const std::vector<std::array<double, 3>> &r_naughts,
+                                        mfem::ElementTransformation &T,
+                                        const mfem::IntegrationRule &ir,
+                                        std::vector<std::array<double, 3>> &integrand_r,
+                                        std::vector<std::array<double, 3>> &integrand_i)
+{
+  // 2D far-field transform from the equivalence principle. With the out-of-plane magnetic
+  // field H_z and the in-plane electric field E, the equivalent line currents on the
+  // integration contour are J = n x H and M = -n x E, and the far-field amplitude is
+  //   E_amp = e^{-i pi/4}/sqrt(8 pi k) * i k \int [ (n x H) + (n x E) x r_hat ]
+  //                                          e^{i k r_hat . r'} dl,
+  // so that sigma_2D = 2 pi |E_amp|^2 / |E_inc|^2.
+  MFEM_VERIFY(E.VectorDim() == 2,
+              "2D far-field computation requires a two-component electric field!");
+  MFEM_VERIFY(B.VectorDim() == 1,
+              "2D far-field computation requires a scalar magnetic field!");
+  MFEM_CONTRACT_VAR(B);  // H_z is recovered from the curl of E (see below).
+  MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+              "Unexpected element type in AddStrattonChuIntegrand2DAtElement!");
+  MFEM_VERIFY(integrand_r.size() == r_naughts.size() &&
+                  integrand_i.size() == r_naughts.size(),
+              "Mismatch between input points and result vector.")
+
+  const mfem::ParMesh *mesh = E.Real().ParFESpace()->GetParMesh();
+  mfem::FaceElementTransformations FET;
+  mfem::IsoparametricTransformation T1, T2;
+  mfem::Vector r_phys(2), E_real(2), E_imag(2), normal(2);
+
+  for (int j = 0; j < ir.GetNPoints(); j++)
+  {
+    const mfem::IntegrationPoint &ip = ir.IntPoint(j);
+    T.SetIntPoint(&ip);
+
+    const bool invert = BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
+        T.ElementNo, *mesh, FET, T1, T2, &ip);  // NOTE: this updates FET.
+    MFEM_VERIFY(!FET.Elem2,
+                "FarField computations are only supported on external boundaries.")
+
+    T.Transform(ip, r_phys);
+
+    // Evaluate E on the adjacent volume element. In 2D the out-of-plane magnetic field is
+    // stored in an L2 space using an integral (moment) basis, so instead of evaluating B
+    // at the point we recover H_z = B_z directly from the curl of E,
+    // B = -1/(iω) ∇×E = (i/ω) ∇×E, as computed by the driven solver.
+    E.Real().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), E_real);
+    E.Imag().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), E_imag);
+    mfem::Vector curl_real(1), curl_imag(1);
+    E.Real().GetCurl(*FET.Elem1, curl_real);
+    E.Imag().GetCurl(*FET.Elem1, curl_imag);
+    const std::complex<double> Hz(-curl_imag(0) / omega, curl_real(0) / omega);
+    BdrGridFunctionCoefficient::GetNormal(T, normal, invert);
+
+    const double quadrature_weight = ip.weight * T.Weight();
+    // Prefactor i k exp(-i pi/4) / sqrt(8 pi k) = sqrt(k / (8 pi)) * (1 + i) / sqrt(2),
+    // with k = omega in internal units (c0 = 1).
+    const double C = quadrature_weight * std::sqrt(omega / (8.0 * M_PI));
+    const std::complex<double> pref(C / std::sqrt(2.0), C / std::sqrt(2.0));
+
+    const std::complex<double> Ex(E_real(0), E_imag(0));
+    const std::complex<double> Ey(E_real(1), E_imag(1));
+    // (n x E)_z.
+    const std::complex<double> nxE_z = normal(0) * Ey - normal(1) * Ex;
+
+    PalacePragmaOmp(parallel for schedule(static))
+    for (std::size_t i = 0; i < r_naughts.size(); i++)
+    {
+      const auto &r = r_naughts[i];
+      const double dot_product = r[0] * r_phys(0) + r[1] * r_phys(1);
+      const std::complex<double> phase(std::cos(omega * dot_product),
+                                       std::sin(omega * dot_product));
+      const std::complex<double> w = pref * phase;
+      // n x H + (n x E) x r_hat.
+      const std::complex<double> F0 = normal(1) * Hz + nxE_z * r[1];
+      const std::complex<double> F1 = -normal(0) * Hz - nxE_z * r[0];
+      const std::complex<double> v0 = w * F0;
+      const std::complex<double> v1 = w * F1;
+      integrand_r[i][0] += v0.real();
+      integrand_r[i][1] += v1.real();
+      integrand_i[i][0] += v0.imag();
+      integrand_i[i][1] += v1.imag();
+    }
+  }
+}
+
 };  // namespace palace

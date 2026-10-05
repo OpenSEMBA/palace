@@ -105,6 +105,14 @@ struct Measurement
 
     // Components of the electric field.
     std::vector<std::array<std::complex<double>, 3>> E_field;
+
+    // Incident plane wave amplitude used for RCS normalization (nondimensional).
+    double E_inc = 0.0;
+
+    // Monostatic backscatter directions and scattered far fields, evaluated per excited
+    // plane wave when requested.
+    std::vector<std::pair<double, double>> monostatic_thetaphis;
+    std::vector<std::array<std::complex<double>, 3>> monostatic_E_field;
   };
 
   // Data for both lumped and wave port.
@@ -212,11 +220,15 @@ struct Measurement
   std::map<int, std::map<std::tuple<int, int, bool>, std::complex<double>>> floquet_port_s;
   bool floquet_circular_output = false;
 
-  // Dimensionalize and nondimensionalize a set of measurements
+  // Dimensionalize and nondimensionalize a set of measurements. The mesh dimension is
+  // needed to scale the far-field output: in 3D this is r E_∞, a voltage, while in 2D it
+  // is sqrt(rho) E_∞ and carries an extra inverse sqrt(length) factor.
   static Measurement Dimensionalize(const Units &units,
-                                    const Measurement &nondim_measurement_cache);
+                                    const Measurement &nondim_measurement_cache,
+                                    int dim = 3);
   static Measurement Nondimensionalize(const Units &units,
-                                       const Measurement &dim_measurement_cache);
+                                       const Measurement &dim_measurement_cache,
+                                       int dim = 3);
   // Helpers for converting complex variable to magnitude in dB and phase.
   static double Magnitude(std::complex<double> x) { return 20.0 * std::log10(std::abs(x)); }
   static double Phase(std::complex<double> x)
@@ -380,6 +392,15 @@ protected:
   void PrintFarFieldE(const SurfacePostOperator &surf_post_op)
     requires(solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE);
 
+  // Driven: scattered far-field RCS (bistatic and monostatic).
+  std::optional<TableWithCSVFile> farfield_rcs;
+  template <ProblemType U = solver_t>
+  auto InitializeFarFieldRCS(const PostOperator<solver_t> &post_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  template <ProblemType U = solver_t>
+  auto PrintFarFieldRCS(const PostOperator<solver_t> &post_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+
   // Eigenmode.
   std::optional<TableWithCSVFile> eig;
 
@@ -456,8 +477,8 @@ public:
     row_idx_v = idx_value_dimensionful;
     row_i = step;
     m_ex_idx = ex_idx;
-    measurement_cache =
-        Measurement::Dimensionalize(post_op.units, nondim_measurement_cache);
+    measurement_cache = Measurement::Dimensionalize(post_op.units, nondim_measurement_cache,
+                                                    post_op.surf_post_op.GetVDim());
     PrintDomainE();
     PrintPortVI(post_op.fem_op->GetLumpedPortOp(), post_op.units);
     PrintPortS();

@@ -35,29 +35,34 @@ namespace
 
 // Magnitude-only farfield check. Phase of the complex E components is not
 // reproducible across MPI partitions, so we compare
-//   |E|(row) = sqrt(|Ex|^2 + |Ey|^2 + |Ez|^2)
-// at the case's rtol. The six trailing columns are r*Re{E_x}, r*Im{E_x}, ...,
-// r*Im{E_z} for both driven and eigenmode output (the leading columns differ).
-palace::test::CustomCheck TestFarfield(double rtol)
+//   |E|(row) = sqrt(|Ex|^2 + |Ey|^2 [+ |Ez|^2])
+// at the case's rtol. The trailing 2*v_dim columns are r*Re{E_x}, r*Im{E_x}, ... for
+// both driven and eigenmode output (the leading columns differ). In 2D only the two
+// in-plane components are present (v_dim = 2).
+palace::test::CustomCheck TestFarfield(double rtol, int v_dim = 3)
 {
-  return [rtol](palace::Table &a, palace::Table &r, const std::filesystem::path &)
+  return [rtol, v_dim](palace::Table &a, palace::Table &r, const std::filesystem::path &)
   {
-    CHECK(a.n_cols() >= 6);
+    const std::size_t n_comp = 2 * static_cast<std::size_t>(v_dim);
+    CHECK(a.n_cols() >= n_comp);
     CHECK(a.n_cols() == r.n_cols());
-    if (a.n_cols() < 6 || a.n_cols() != r.n_cols())
+    if (a.n_cols() < n_comp || a.n_cols() != r.n_cols())
     {
       return;
     }
-    const std::size_t e0 = a.n_cols() - 6;
+    const std::size_t e0 = a.n_cols() - n_comp;
     const std::size_t n_rows = std::min(a.n_rows(), r.n_rows());
     for (std::size_t i = 0; i < n_rows; ++i)
     {
       auto mag_sq = [&](palace::Table &t)
       {
         auto sq = [](double x, double y) { return x * x + y * y; };
-        return sq(t[e0].data[i], t[e0 + 1].data[i]) +
-               sq(t[e0 + 2].data[i], t[e0 + 3].data[i]) +
-               sq(t[e0 + 4].data[i], t[e0 + 5].data[i]);
+        double mag_sq = 0.0;
+        for (int d = 0; d < v_dim; d++)
+        {
+          mag_sq += sq(t[e0 + 2 * d].data[i], t[e0 + 2 * d + 1].data[i]);
+        }
+        return mag_sq;
       };
       const double m_a = std::sqrt(mag_sq(a));
       const double m_r = std::sqrt(mag_sq(r));
@@ -1294,6 +1299,37 @@ TEST_CASE("antenna_halfwave_dipole_surfacecurrent", "[Serial][Parallel][GPU][Reg
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("antenna", "antenna_halfwave_dipole_surfacecurrent.json",
                                   "antenna_halfwave_dipole_surfacecurrent", opts);
+}
+
+// --- plane wave excitation + scattered far-field RCS of a PEC sphere ---
+
+TEST_CASE("planewave_sphere", "[Serial][Parallel][GPU][Regression]")
+{
+  // Scattered-field formulation: the incident wave is imposed as a tangential electric
+  // boundary condition on the PEC sphere and the absorbing boundary condition is
+  // homogeneous.
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-12;
+  opts.paraview_fields = false;
+  opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
+  palace::test::RunRegressionCase("planewave_sphere", "planewave_sphere.json",
+                                  "planewave_sphere", opts);
+}
+
+// --- plane wave excitation + scattered far-field RCS of a 2D PEC cylinder ---
+
+TEST_CASE("planewave_cylinder", "[Serial][Parallel][GPU][Regression]")
+{
+  // 2D scattered-field formulation using the equivalence-principle line-integral
+  // far-field transform. The 2D scattering width is reported in place of the 3D RCS.
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-12;
+  opts.paraview_fields = false;
+  opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol, 2);
+  palace::test::RunRegressionCase("planewave_cylinder", "planewave_cylinder.json",
+                                  "planewave_cylinder", opts);
 }
 
 // --- coaxial + cpw non-adaptive + cpw eigen: reltol still 2e-2 (from  ---

@@ -6,6 +6,7 @@
 #include "currentdipoleoperator.hpp"
 #include "floquetportoperator.hpp"
 #include "lumpedportoperator.hpp"
+#include "planewaveoperator.hpp"
 #include "surfacecurrentoperator.hpp"
 #include "waveportoperator.hpp"
 
@@ -42,6 +43,11 @@ namespace palace
                      (ex.floquet_port.size() > 1) ? "s" : "",
                      fmt::join(ex.floquet_port, " "));
     }
+    if (!ex.plane_wave.empty())
+    {
+      fmt::format_to(out, " Plane wave{} {:2d}\n", (ex.plane_wave.size() > 1) ? "s" : "",
+                     fmt::join(ex.plane_wave, " "));
+    }
     if (!ex.current_port.empty())
     {
       fmt::format_to(out, " Surface current port{} {:2d}\n",
@@ -61,11 +67,10 @@ namespace palace
 
 void to_json(nlohmann::json &j, const PortExcitations::SingleExcitationSpec &p)
 {
-  j = nlohmann::json{{"LumpedPort", p.lumped_port},
-                     {"WavePort", p.wave_port},
-                     {"FloquetPort", p.floquet_port},
-                     {"SurfaceCurrent", p.current_port},
-                     {"CurrentDipole", p.current_dipole}};
+  j = nlohmann::json{
+      {"LumpedPort", p.lumped_port},      {"WavePort", p.wave_port},
+      {"FloquetPort", p.floquet_port},    {"PlaneWave", p.plane_wave},
+      {"SurfaceCurrent", p.current_port}, {"CurrentDipole", p.current_dipole}};
 }
 
 void from_json(const nlohmann::json &j, PortExcitations::SingleExcitationSpec &p)
@@ -73,6 +78,12 @@ void from_json(const nlohmann::json &j, PortExcitations::SingleExcitationSpec &p
   j.at("LumpedPort").get_to(p.lumped_port);
   j.at("WavePort").get_to(p.wave_port);
   j.at("FloquetPort").get_to(p.floquet_port);
+  // Optional for backward compatibility with saved metadata from before plane wave
+  // excitations were introduced.
+  if (j.contains("PlaneWave"))
+  {
+    j.at("PlaneWave").get_to(p.plane_wave);
+  }
   j.at("SurfaceCurrent").get_to(p.current_port);
   j.at("CurrentDipole").get_to(p.current_dipole);
 }
@@ -90,6 +101,7 @@ void from_json(const nlohmann::json &j, PortExcitations &p)
 PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
                                  const WavePortOperator &wave_port_op,
                                  const FloquetPortOperator &floquet_port_op,
+                                 const PlaneWaveOperator &plane_wave_op,
                                  const SurfaceCurrentOperator &surf_j_op,
                                  const CurrentDipoleOperator &dipole_op)
 {
@@ -119,6 +131,15 @@ PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
     }
     excitations.try_emplace(port.excitation, SingleExcitationSpec{});
     excitations.at(port.excitation).floquet_port.push_back(idx);
+  }
+  for (const auto &[idx, port] : plane_wave_op)
+  {
+    if (!port.HasExcitation())
+    {
+      continue;
+    }
+    excitations.try_emplace(port.excitation, SingleExcitationSpec{});
+    excitations.at(port.excitation).plane_wave.push_back(idx);
   }
 
   // Surface currents are always excited. Add them to all single existing excitations.
