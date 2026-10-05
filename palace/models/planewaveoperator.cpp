@@ -33,7 +33,7 @@ public:
                              bool include_invz, double scale = 1.0,
                              const std::vector<std::complex<double>> *attr_scale = nullptr,
                              bool background = false)
-    : mfem::VectorCoefficient(3), data(data), omega(omega), imag(imag),
+    : mfem::VectorCoefficient(data.dim), data(data), omega(omega), imag(imag),
       include_invz(include_invz), scale(scale), attr_scale(attr_scale),
       background(background)
   {
@@ -66,8 +66,8 @@ void PlaneWaveVectorCoefficient::Eval(mfem::Vector &V, mfem::ElementTransformati
   {
     s *= (*attr_scale)[T.Attribute];
   }
-  V.SetSize(3);
-  for (int d = 0; d < 3; d++)
+  V.SetSize(data.dim);
+  for (int d = 0; d < data.dim; d++)
   {
     const std::complex<double> v = s * (include_invz ? invz : 1.0) * E[d];
     V(d) = imag ? v.imag() : v.real();
@@ -101,13 +101,23 @@ mfem::Array<int> AttrListToMarker(const mfem::Array<int> &attr_list)
 
 PlaneWaveData::PlaneWaveData(const config::PlaneWaveData &data,
                              const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
-  : excitation(data.excitation), direction(3), polarization(3), amplitude(0.0), origin(3)
+  : excitation(data.excitation), dim(mesh.SpaceDimension()), direction(dim),
+    polarization(dim), amplitude(0.0), origin(dim)
 {
-  for (int d = 0; d < 3; d++)
+  MFEM_VERIFY(dim == 2 || dim == 3,
+              "Plane wave excitation is only available for 2D and 3D simulations!");
+  for (int d = 0; d < dim; d++)
   {
     direction(d) = data.direction[d];
     polarization(d) = data.polarization[d];
     origin(d) = data.origin[d];
+  }
+  if (dim == 2)
+  {
+    MFEM_VERIFY(std::abs(data.direction[2]) < 1.0e-14 &&
+                    std::abs(data.polarization[2]) < 1.0e-14,
+                "Plane wave direction and polarization must be in-plane for 2D "
+                "simulations!");
   }
   // The config amplitude is already nondimensionalized in NondimensionalizeInputs.
   amplitude = data.amplitude * std::exp(std::complex<double>(0.0, data.phase));
@@ -174,7 +184,7 @@ void PlaneWaveData::GetElectricFieldImpl(const mfem::Vector &x, double omega, do
 {
   const double k = omega / c;
   double phase = 0.0;
-  for (int d = 0; d < 3; d++)
+  for (int d = 0; d < dim; d++)
   {
     phase += direction(d) * (x(d) - origin(d));
   }
@@ -186,9 +196,13 @@ void PlaneWaveData::GetElectricFieldImpl(const mfem::Vector &x, double omega, do
   // monostatic/backscatter direction is +Direction.
   phase *= -k;
   const std::complex<double> e = amplitude * std::exp(std::complex<double>(0.0, phase));
-  for (int d = 0; d < 3; d++)
+  for (int d = 0; d < dim; d++)
   {
     E[d] = e * polarization(d);
+  }
+  for (int d = dim; d < 3; d++)
+  {
+    E[d] = 0.0;
   }
 }
 
@@ -217,8 +231,8 @@ PlaneWaveOperator::PlaneWaveOperator(
     const std::map<int, config::PlaneWaveData> &planewave, const MaterialOperator &mat_op,
     const mfem::ParMesh &mesh)
 {
-  MFEM_VERIFY(mesh.SpaceDimension() == 3,
-              "Plane wave excitation is only available for 3D simulations!");
+  MFEM_VERIFY(mesh.SpaceDimension() == 2 || mesh.SpaceDimension() == 3,
+              "Plane wave excitation is only available for 2D and 3D simulations!");
   SetUpBoundaryProperties(planewave, mat_op, mesh);
   PrintBoundaryInfo(mesh);
 }
@@ -242,11 +256,22 @@ void PlaneWaveOperator::PrintBoundaryInfo(const mfem::ParMesh &mesh)
   Mpi::Print("\nConfiguring incident plane wave excitation at attributes:\n");
   for (const auto &[idx, data] : waves)
   {
-    Mpi::Print(" {:d}: Index = {:d}, k = ({:+.3f}, {:+.3f}, {:+.3f}), "
-               "E = ({:+.3f}, {:+.3f}, {:+.3f}), Excitation = {:d}\n",
-               (data.attr_list.Size() > 0) ? data.attr_list[0] : 0, idx, data.direction(0),
-               data.direction(1), data.direction(2), data.polarization(0),
-               data.polarization(1), data.polarization(2), data.excitation);
+    const int attr = (data.attr_list.Size() > 0) ? data.attr_list[0] : 0;
+    if (data.dim == 2)
+    {
+      Mpi::Print(" {:d}: Index = {:d}, k = ({:+.3f}, {:+.3f}), "
+                 "E = ({:+.3f}, {:+.3f}), Excitation = {:d}\n",
+                 attr, idx, data.direction(0), data.direction(1), data.polarization(0),
+                 data.polarization(1), data.excitation);
+    }
+    else
+    {
+      Mpi::Print(" {:d}: Index = {:d}, k = ({:+.3f}, {:+.3f}, {:+.3f}), "
+                 "E = ({:+.3f}, {:+.3f}, {:+.3f}), Excitation = {:d}\n",
+                 attr, idx, data.direction(0), data.direction(1), data.direction(2),
+                 data.polarization(0), data.polarization(1), data.polarization(2),
+                 data.excitation);
+    }
   }
 }
 

@@ -30,6 +30,9 @@ public:
   // Excitation index (0 if not excited).
   int excitation;
 
+  // Spatial dimension of the simulation (2 or 3).
+  int dim;
+
   // Boundary attributes where the incident wave enters the domain.
   mfem::Array<int> attr_list;
 
