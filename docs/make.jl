@@ -113,7 +113,10 @@ makedocs(
             "examples/cpw.md",
             "examples/cpw2d.md",
             "examples/dielectric_grating.md",
-            "examples/circular_hole.md"
+            "examples/circular_hole.md",
+            "examples/sphere_scattering.md",
+            "examples/debye_sphere.md",
+            "examples/cylinder_scattering.md"
         ],
         "faq.md",
         "For Developers" => Any[

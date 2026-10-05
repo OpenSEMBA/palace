@@ -28,3 +28,6 @@ installed test data is self-contained and does not depend on source-tree example
   - [2D Coplanar Waveguide Mode Analysis](cpw2d.md)
   - [Floquet Ports for a Dielectric Grating](dielectric_grating.md)
   - [Flux Trapping Analysis](circular_hole.md)
+  - [Plane Wave Scattering from a PEC Sphere](sphere_scattering.md)
+  - [Plane Wave Scattering from a Lossy Debye Sphere](debye_sphere.md)
+  - [Plane Wave Scattering from a 2D PEC Cylinder](cylinder_scattering.md)
