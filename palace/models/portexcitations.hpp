@@ -14,6 +14,7 @@ namespace palace
 class FloquetPortOperator;
 class LumpedPortOperator;
 class WavePortOperator;
+class PlaneWaveOperator;
 class SurfaceCurrentOperator;
 class CurrentDipoleOperator;
 
@@ -26,9 +27,10 @@ enum class PortType : std::uint8_t
   LumpedPort = 0,
   WavePort = 1,
   FloquetPort = 2,
-  CurrentPort = 3,
-  CurrentDipole = 4,
-  Undefined = 5
+  PlaneWave = 3,
+  CurrentPort = 4,
+  CurrentDipole = 5,
+  Undefined = 6
 };
 
 class PortExcitations
@@ -39,6 +41,7 @@ public:
     std::vector<int> lumped_port = {};
     std::vector<int> wave_port = {};
     std::vector<int> floquet_port = {};
+    std::vector<int> plane_wave = {};
     std::vector<int> current_port = {};
     std::vector<int> current_dipole = {};
 
@@ -49,6 +52,7 @@ public:
       out.insert(out.end(), lumped_port.cbegin(), lumped_port.cend());
       out.insert(out.end(), wave_port.cbegin(), wave_port.cend());
       out.insert(out.end(), floquet_port.cbegin(), floquet_port.cend());
+      out.insert(out.end(), plane_wave.cbegin(), plane_wave.cend());
       out.insert(out.end(), current_port.cbegin(), current_port.cend());
       out.insert(out.end(), current_dipole.cbegin(), current_dipole.cend());
       return out;
@@ -60,9 +64,11 @@ public:
       auto n_lumped = lumped_port.size();
       auto n_wave = wave_port.size();
       auto n_floquet = floquet_port.size();
+      auto n_plane = plane_wave.size();
       auto n_current = current_port.size();
       auto n_dipole = current_dipole.size();
-      auto n_total = n_lumped + n_wave + n_floquet + n_current + n_dipole;
+      auto n_total =
+          n_lumped + n_wave + n_floquet + n_plane + n_current + n_dipole;
 
       if (n_total != 1)
       {
@@ -79,6 +85,10 @@ public:
       else if (n_floquet == 1)
       {
         return std::make_tuple(true, PortType::FloquetPort, floquet_port.at(0));
+      }
+      else if (n_plane == 1)
+      {
+        return std::make_tuple(true, PortType::PlaneWave, plane_wave.at(0));
       }
       else if (n_current == 1)
       {
@@ -102,6 +112,7 @@ public:
   PortExcitations(const LumpedPortOperator &lumped_port_op,
                   const WavePortOperator &wave_port_op,
                   const FloquetPortOperator &floquet_port_op,
+                  const PlaneWaveOperator &plane_wave_op,
                   const SurfaceCurrentOperator &surf_j_op,
                   const CurrentDipoleOperator &dipole_op);
 

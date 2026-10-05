@@ -228,6 +228,15 @@
           "title": "Absorbing Boundary",
           "description": "Farfield absorbing (scattering) boundary conditions. These are artificial boundary conditions applied at farfield boundaries to minimize reflections."
         },
+        "PlaneWave": {
+          "type": "array",
+          "title": "Plane Wave",
+          "description": "Array of incident plane wave excitations applied on absorbing boundaries. Only available for frequency domain driven simulations. The incident field is injected through the absorbing boundary as a non-homogeneous radiation condition.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/PlaneWave"
+          }
+        },
         "Conductivity": {
           "type": "array",
           "description": "Array of finite conductivity surface impedance boundaries. Models the effect of a boundary with non-infinite conductivity for conductors with thickness much larger than the skin depth. Only available for frequency domain driven and eigenmode simulations.",
@@ -1011,6 +1020,93 @@
           "maximum": 2,
           "default": 1,
           "x-palace-advanced": true
+        },
+        "Radius": {
+          "type": "number",
+          "description": "Radius of curvature of the absorbing boundary, for a spherical or circular boundary centered at the origin. Enables the Bayliss-Turkel 2/R curvature term in the second-order absorbing boundary condition. The default (0) corresponds to a planar boundary with infinite radius of curvature.",
+          "minimum": 0,
+          "default": 0,
+          "x-palace-advanced": true
+        },
+        "ScatteredField": {
+          "type": "boolean",
+          "description": "Solve for the scattered field instead of the total field. The incident plane wave is imposed as a tangential electric boundary condition on PEC boundaries, the absorbing boundary condition becomes homogeneous, and the far-field postprocessing treats the solution as the scattered field without incident subtraction. Only available for driven simulations with PEC scatterers and a plane wave excitation.",
+          "default": false,
+          "x-palace-advanced": true
+        }
+      }
+    },
+    "PlaneWave": {
+      "type": "object",
+      "title": "Plane Wave",
+      "description": "Incident plane wave excitation injected through an absorbing boundary. Only available for frequency domain driven simulations.",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes",
+        "Direction"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this plane wave, used in postprocessing output files. Must be unique across all port and source types.",
+          "exclusiveMinimum": 0
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes with absorbing boundary conditions where the incident plane wave enters the domain."
+        },
+        "Excitation": {
+          "description": "Excitation flag or positive excitation index. When excited, injects the incident plane wave.",
+          "default": false,
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/ExcitationIndex"
+            }
+          ]
+        },
+        "Direction": {
+          "type": "array",
+          "description": "Propagation direction of the incident plane wave (normalized internally).",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "Polarization": {
+          "type": "array",
+          "description": "Electric field polarization direction (normalized internally, must be orthogonal to Direction).",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [1.0, 0.0, 0.0]
+        },
+        "Amplitude": {
+          "type": "number",
+          "description": "Incident electric field amplitude, V/m. The radar cross section is independent of this value for linear problems.",
+          "exclusiveMinimum": 0,
+          "default": 1.0
+        },
+        "Phase": {
+          "type": "number",
+          "description": "Incident electric field phase, radians.",
+          "default": 0.0
+        },
+        "ReferencePoint": {
+          "type": "array",
+          "description": "Reference point defining the zero of the incident wave phase, in mesh length units.",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [0.0, 0.0, 0.0]
         }
       }
     },
@@ -1919,6 +2015,16 @@
           "items": {
             "$ref": "#/$defs/ThetaPhi"
           }
+        },
+        "Scattered": {
+          "type": "boolean",
+          "description": "Subtract the incident plane wave contribution from the total field so that the far-field output is the scattered field, and write an RCS table (`farfield-rcs.csv`). Requires a `PlaneWave` excitation.",
+          "default": false
+        },
+        "Monostatic": {
+          "type": "boolean",
+          "description": "For each excited plane wave, additionally evaluate the scattered far field in the backscatter direction and include it in the RCS table. Requires `Scattered`.",
+          "default": false
         }
       }
     },

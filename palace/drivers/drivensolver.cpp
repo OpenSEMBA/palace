@@ -191,6 +191,12 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       // Solve linear system.
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
+      if (space_op.IsScatteredField())
+      {
+        // Scattered-field formulation: impose n × E_s = -n × E_inc on the PEC boundaries
+        // and eliminate the non-homogeneous essential boundary condition from the RHS.
+        space_op.AddScatteredFieldExcitationVector(*A, excitation_idx, omega, RHS);
+      }
 
       Mpi::Print("\n");
       ksp.Mult(RHS, E);

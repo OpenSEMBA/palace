@@ -307,6 +307,28 @@ void IoData::CheckConfiguration()
     }
   }
 
+  // Incident plane wave excitation requires frequency-domain driven simulations and an
+  // absorbing boundary where the wave enters the domain.
+  if (!boundaries.planewave.empty())
+  {
+    MFEM_VERIFY(problem.type == ProblemType::DRIVEN,
+                "Plane wave excitation is only available for frequency-domain driven "
+                "simulations!");
+    MFEM_VERIFY(!boundaries.farfield.empty(),
+                "Plane wave excitation requires an \"Absorbing\" boundary!");
+    for (const auto &[idx, data] : boundaries.planewave)
+    {
+      for (auto attr : data.attributes)
+      {
+        MFEM_VERIFY(std::find(boundaries.farfield.attributes.begin(),
+                              boundaries.farfield.attributes.end(),
+                              attr) != boundaries.farfield.attributes.end(),
+                    "Plane wave index " << idx << " boundary attribute " << attr
+                                        << " must also be an absorbing boundary!");
+      }
+    }
+  }
+
   // Check that the provided domain and boundary objects are all supported by the requested
   // problem type.
   if (problem.type == ProblemType::DRIVEN)
@@ -770,6 +792,12 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
 
   // Floquet periodic boundaries.
   config::Nondimensionalize(units, boundaries.periodic);
+
+  // Incident plane wave amplitude and phase reference point.
+  for (auto &[idx, data] : boundaries.planewave)
+  {
+    config::Nondimensionalize(units, data);
+  }
 
   // Wave port offset distance and voltage path coordinates.
   for (auto &[idx, data] : boundaries.waveport)

@@ -121,3 +121,131 @@ This type of output can be processed by several different packages and
 languages. For instance, see the [antenna example](../examples/antenna.md) for
 an example of a [Julia](https://julialang.org/) script that plots antenna
 patterns.
+
+## Incident Plane Waves and Scattering
+
+For scattering and radar cross section (RCS) problems, *Palace* can illuminate a
+structure with an incident plane wave and extract the scattered far field. The
+incident field is injected through the [`Absorbing` boundary
+conditions](../config/reference.md#config-boundaries-absorbing) as a
+non-homogeneous radiation condition: the scattered field satisfies the
+homogeneous absorbing boundary condition, which corresponds to the classic
+total-field formulation of scattering with absorbing boundary conditions (see
+Jin, *The Finite Element Method in Electromagnetics*, Section 9.3, and Monk,
+*Finite Element Methods for Maxwell's Equations*, Eq. (1.25)).
+
+A plane wave is configured under `"Boundaries"`:
+
+```json
+"PlaneWave":
+[
+    {
+        "Index": 1,
+        "Attributes": [1],
+        "Excitation": 1,
+        "Direction": [0.0, 0.0, 1.0],
+        "Polarization": [1.0, 0.0, 0.0],
+        "Amplitude": 1.0
+    }
+]
+```
+
+  - `"Attributes"` must be absorbing boundary attributes through which the
+    incident wave enters the domain.
+  - `"Direction"` is the propagation direction `k̂` (normalized internally), and
+    `"Polarization"` is the electric field direction, which must be orthogonal
+    to `"Direction"`. The wave travels along `+k̂`, so the backscatter
+    (monostatic) direction is `-k̂`.
+  - `"Amplitude"` is the incident electric field magnitude in V/m; the RCS is
+    independent of this value for linear problems. `"Phase"` (radians) and
+    `"ReferencePoint"` (mesh length units) optionally define the phase
+    reference.
+  - The `"Excitation"` index follows the same conventions as ports, so multiple
+    plane waves (for example, different incidence angles or polarizations) can be
+    swept in a single simulation.
+
+Plane waves are only available for frequency domain driven simulations, and the
+absorbing boundary should be placed in a homogeneous, isotropic medium (vacuum
+for the usual free-space scattering setup).
+
+To extract the scattered far field and RCS, set `"Scattered"` and optionally
+`"Monostatic"` in the `"FarField"` postprocessing block:
+
+```json
+"Postprocessing":
+{
+    "FarField":
+    {
+        "Attributes": [1],
+        "ThetaPhis": [[90, 0], [90, 90], [90, 180]],
+        "Scattered": true,
+        "Monostatic": true
+    }
+}
+```
+
+  - With `"Scattered": true`, the incident plane wave contribution is subtracted
+    from the total field on the integration surface, so `farfield-rE.csv`
+    contains the scattered far field and a new `farfield-rcs.csv` file is
+    written with the bistatic RCS in m² and dBsm,
+    `σ = 4π |r E_scat|² / |E_inc|²`.
+  - With `"Monostatic": true`, the scattered far field is also evaluated in the
+    backscatter direction `-k̂` of each excited plane wave and added to
+    `farfield-rcs.csv`.
+
+For a plane wave incident on a PEC sphere, the scattered far field computed this
+way agrees with the analytic Mie series, which provides a useful validation case.
+
+### Scattered-field formulation
+
+In the default total-field formulation the incident wave is injected through the
+absorbing boundary and the scattered field is recovered by subtracting the
+analytic incident field from the total field. This requires the incident wave to
+be resolved accurately all the way to the truncation boundary, and the absorbing
+boundary reflection of the strong incident field limits the accuracy of
+low-RCS directions.
+
+Setting `"ScatteredField": true` on the `"Absorbing"` object instead solves
+directly for the scattered field. The incident wave enters through the PEC
+boundary condition `n × E_s = -n × E_inc` and, in penetrable (dielectric)
+regions, through the volume contrast sources
+
+```
+ω² ∫ (ε_eff − ε₀) E_inc · v dV ,
+```
+
+with `ε_eff = ε_r + i(ε_imag − σ/ω)` the same complex relative permittivity used
+by the system matrix (`ε_imag = −ε_r tan δ`), evaluated at the driving frequency
+and with the incident field taken in the free-space background medium. The
+absorbing boundary condition becomes homogeneous and the far-field
+postprocessing treats the solution as the scattered field (no incident
+subtraction). This decouples the incident wave from the absorbing boundary
+(the DGTD-style TF/SF idea) and is the recommended mode for RCS validation. It
+supports PEC boundaries and nonmagnetic dielectric regions (lossless or lossy);
+magnetic contrast (`μ ≠ μ₀`) and dispersive material models are not yet
+included. A plane wave excitation is required.
+
+Two additional options on the `"Absorbing"` object control the absorbing
+boundary:
+
+  - `"Radius"`: radius of curvature of a spherical or circular absorbing
+    boundary centered at the origin. This activates the Bayliss-Turkel curvature
+    term `2/R` in the second-order ABC coefficient
+    `β = 1/(2ik + 2/R)`, which removes the leading-order reflection of outgoing
+    spherical waves.
+  - `"Order"`: 1 or 2.
+
+With the scattered-field formulation, a spherical boundary of radius
+`R ≈ a + 1.2λ` and second-order curved elements, the bistatic RCS of a 1 m PEC
+sphere agrees with the Mie series to **0.15–0.32 dB** (RMS/max) at `ka = 0.5`,
+`ka = 1`, `ka = 2` and `ka = 3`.
+
+!!! warning "Limitations"
+
+    The accuracy of the scattered field is limited by the reflection of the
+    absorbing boundary condition. Use the scattered-field formulation
+    (`"ScatteredField": true`) with a second-order `"Order": 2` absorbing
+    boundary, place it sufficiently far from the scatterer, and verify
+    convergence for low-RCS (deep null) directions. Perfectly matched layers are
+    not yet implemented.
+

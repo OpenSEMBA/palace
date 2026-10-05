@@ -1955,10 +1955,58 @@ void PostOperator<solver_t>::MeasureFarField() const
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
   {
     measurement_cache.farfield.thetaphis = surf_post_op.farfield.thetaphis;
+    measurement_cache.farfield.monostatic_thetaphis.clear();
+    measurement_cache.farfield.monostatic_E_field.clear();
+    measurement_cache.farfield.E_inc = 0.0;
+
+    // Find the plane wave exciting the current excitation, if incident field subtraction
+    // (scattered far field) was requested.
+    const PlaneWaveData *incident = nullptr;
+    if constexpr (solver_t == ProblemType::DRIVEN)
+    {
+      if (surf_post_op.farfield.scattered)
+      {
+        const PlaneWaveData *pw =
+            fem_op->GetPlaneWaveOp().GetExcitationWave(measurement_cache.ex_idx);
+        if (pw)
+        {
+          measurement_cache.farfield.E_inc = std::abs(pw->amplitude);
+        }
+        // In the scattered-field formulation the solution is already the scattered field
+        // and no incident subtraction is applied.
+        if (pw && !fem_op->IsScatteredField())
+        {
+          incident = pw;
+        }
+      }
+    }
 
     // NOTE: measurement_cache.freq is omega (it has a factor of 2pi).
     measurement_cache.farfield.E_field = surf_post_op.GetFarFieldrE(
-        measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq);
+        measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq, incident);
+
+    // Monostatic RCS: evaluate the scattered far field in the backscatter direction. The
+    // incident phasor exp(-i k k̂·x) travels along +Direction (Palace's exp(+iωt)
+    // convention), so the backscatter (monostatic) direction is -Direction.
+    if constexpr (solver_t == ProblemType::DRIVEN)
+    {
+      if (incident && surf_post_op.farfield.monostatic)
+      {
+        const double vx = -incident->direction(0);
+        const double vy = -incident->direction(1);
+        const double vz = -incident->direction(2);
+        const double theta = std::acos(std::clamp(vz, -1.0, 1.0));
+        double phi = std::atan2(vy, vx);
+        if (phi < 0.0)
+        {
+          phi += 2.0 * M_PI;
+        }
+        std::vector<std::pair<double, double>> monostatic_dirs{{theta, phi}};
+        measurement_cache.farfield.monostatic_thetaphis = monostatic_dirs;
+        measurement_cache.farfield.monostatic_E_field = surf_post_op.GetFarFieldrE(
+            monostatic_dirs, *E, *B, measurement_cache.freq, incident);
+      }
+    }
   }
 }
 
