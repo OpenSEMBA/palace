@@ -131,6 +131,8 @@ Measurement Measurement::Dimensionalize(const Units &units,
   // The far field r E_∞ is a field times a distance, i.e. a voltage.
   measurement_cache.farfield.E_field = units.Dimensionalize<Units::ValueType::VOLTAGE>(
       nondim_measurement_cache.farfield.E_field);
+  measurement_cache.farfield.E_inc = units.Dimensionalize<Units::ValueType::FIELD_E>(
+      nondim_measurement_cache.farfield.E_inc);
 
   // Mode analysis data: stored nondimensional, dimensionalize here.
   measurement_cache.mode_data = nondim_measurement_cache.mode_data;
@@ -273,6 +275,8 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   measurement_cache.farfield.thetaphis = dim_measurement_cache.farfield.thetaphis;  // NONE
   measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::VOLTAGE>(
       dim_measurement_cache.farfield.E_field);
+  measurement_cache.farfield.E_inc = units.Nondimensionalize<Units::ValueType::FIELD_E>(
+      dim_measurement_cache.farfield.E_inc);
 
   // Mode analysis data is already in SI units (computed dimensional).
   measurement_cache.mode_data = dim_measurement_cache.mode_data;  // NONE
@@ -505,6 +509,7 @@ void PostOperatorCSV<solver_t>::FlushDeferredTables()
   WriteTable(port_Z);
   WriteTable(floquet_port_S);
   WriteTable(farfield_E);
+  WriteTable(farfield_rcs);
   WriteTable(eig);
   WriteTable(mode_kn);
   WriteTable(mode_Z);
@@ -799,6 +804,79 @@ auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
     }
   }
   WriteTable(*farfield_E);
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializeFarFieldRCS(
+    const SurfacePostOperator &surf_post_op, const SpaceOperator &fem_op)
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  if (!(surf_post_op.farfield.size() > 0) || fem_op.GetPlaneWaveOp().Empty())
+  {
+    return;
+  }
+
+  farfield_rcs = TableWithCSVFile(post_dir / "farfield-rcs.csv");
+
+  Table t;  // Define table locally first due to potential reload.
+  int nr_expected_measurement_rows =
+      static_cast<int>(surf_post_op.farfield.size() * ex_idx_v_all.size());
+  t.reserve(nr_expected_measurement_rows, 7);
+  t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
+  {
+    Column ex_col("exc", "exc", 0, PrecIndexCol(solver_t), {}, "");
+    ex_col.print_as_int = true;
+    t.insert(std::move(ex_col));
+  }
+  t.insert(Column("theta", "theta (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
+  t.insert(Column("phi", "phi (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
+  t.insert("rcs", "RCS (m^2)");
+  t.insert("rcs_theta", "RCS_theta (m^2)");
+  t.insert("rcs_phi", "RCS_phi (m^2)");
+
+  MoveTableValidateReload(*farfield_rcs, std::move(t));
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintFarFieldRCS()
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  // Only excitations consisting of a single incident plane wave define a radar cross
+  // section: σ = 4π |r E_s|² / |E_inc|², with the θ̂ and φ̂ polarized components σ_θ and
+  // σ_φ (σ = σ_θ + σ_φ).
+  const double E_inc = measurement_cache.farfield.E_inc;
+  if (!farfield_rcs || !(E_inc > 0.0))
+  {
+    return;
+  }
+  for (std::size_t i = 0; i < measurement_cache.farfield.thetaphis.size(); i++)
+  {
+    const auto &[theta, phi] = measurement_cache.farfield.thetaphis[i];
+    const auto &rE = measurement_cache.farfield.E_field[i];
+    const std::array<double, 3> theta_hat = {
+        std::cos(theta) * std::cos(phi), std::cos(theta) * std::sin(phi), -std::sin(theta)};
+    const std::array<double, 3> phi_hat = {-std::sin(phi), std::cos(phi), 0.0};
+    std::complex<double> rE_theta = 0.0, rE_phi = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      rE_theta += theta_hat[d] * rE[d];
+      rE_phi += phi_hat[d] * rE[d];
+    }
+    const double scale = 4.0 * M_PI / (E_inc * E_inc);
+    const double rcs_theta = scale * std::norm(rE_theta);
+    const double rcs_phi = scale * std::norm(rE_phi);
+
+    farfield_rcs->table["idx"] << row_idx_v;
+    farfield_rcs->table["exc"] << static_cast<double>(m_ex_idx);
+    farfield_rcs->table["theta"] << 180 / M_PI * theta;
+    farfield_rcs->table["phi"] << 180 / M_PI * phi;
+    farfield_rcs->table["rcs"] << rcs_theta + rcs_phi;
+    farfield_rcs->table["rcs_theta"] << rcs_theta;
+    farfield_rcs->table["rcs_phi"] << rcs_phi;
+  }
+  WriteTable(*farfield_rcs);
 }
 
 template <ProblemType solver_t>
@@ -1753,6 +1831,10 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   {
     InitializeFarFieldE(post_op.surf_post_op);
   }
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    InitializeFarFieldRCS(post_op.surf_post_op, *post_op.fem_op);
+  }
   if constexpr (solver_t == ProblemType::EIGENMODE)
   {
     InitializeEig();
@@ -1832,6 +1914,10 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
   {
     PrintFarFieldE(post_op.surf_post_op);
+  }
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    PrintFarFieldRCS();
   }
   if constexpr (solver_t == ProblemType::EIGENMODE)
   {

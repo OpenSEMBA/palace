@@ -17,6 +17,7 @@
 #include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/planewaveoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
@@ -81,8 +82,18 @@ private:
   WavePortOperator wave_port_op;
   FloquetPortOperator floquet_port_op;
   SurfaceCurrentOperator surf_j_op;
+  PlaneWaveOperator plane_wave_op;
 
   PortExcitations port_excitation_helper;
+
+  // Background medium for incident plane waves (material index of the medium adjacent to
+  // the absorbing boundary), and the operators defining the background system matrix
+  // A_bg(ω) = K_bg + iω C_bg - ω² M_bg + i (0.5 / ω) D_bg used to construct the plane wave
+  // source term. These are assembled on first use without eliminating essential BCs.
+  int plane_wave_bg_mat = -1;
+  std::unique_ptr<Operator> plane_wave_K, plane_wave_M, plane_wave_C, plane_wave_D;
+  void SetUpPlaneWaveBackground();
+  void AssemblePlaneWaveBackgroundOperators();
 
   mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                                            const mfem::ParMesh &mesh);
@@ -119,6 +130,7 @@ private:
   // Helper functions for excitation vector assembly.
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
+  bool AddPlaneWaveExcitationVector(int excitation_idx, double omega, ComplexVector &RHS);
 
   // Helper functions to build the preconditioner matrix. The type of a3 selects the
   // frequency-dependent (A2) stamping path: double dispatches to the real-ω overload of
@@ -175,6 +187,8 @@ public:
   auto &GetFloquetPortOp() { return floquet_port_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
   auto &GetSurfaceConductivityOp() { return surf_sigma_op; }
+  const auto &GetPlaneWaveOp() const { return plane_wave_op; }
+  const auto &GetFarfieldOp() const { return farfield_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetFloquetPortOp() const { return floquet_port_op; }
@@ -422,6 +436,16 @@ public:
   // already been initialised at the requested frequency.
   void GetWavePortFieldVectorPrimaryEt(int port_idx, double omega_ref,
                                        ComplexVector &Et_primary);
+
+  // Background wavenumber k = ω √(μ ε) for incident plane waves, where μ and ε are the
+  // properties of the medium adjacent to the absorbing boundary.
+  double GetPlaneWaveWavenumber(double omega) const;
+
+  // Fill the true dof vector of the Nédélec interpolant of the incident plane wave field
+  // E_inc for the given excitation at frequency ω. For an excitation including an incident
+  // plane wave, the scattered field is E_s = E - E_inc. Returns false (and a zero vector)
+  // if the excitation has no incident plane wave.
+  bool GetPlaneWaveIncidentField(int excitation_idx, double omega, ComplexVector &E_inc);
 
   // Construct a constant or randomly initialized vector which satisfies the PEC essential
   // boundary conditions.

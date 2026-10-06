@@ -1958,7 +1958,54 @@ void PostOperator<solver_t>::MeasureFarField() const
 
     // NOTE: measurement_cache.freq is omega (it has a factor of 2pi).
     measurement_cache.farfield.E_field = surf_post_op.GetFarFieldrE(
-        measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq);
+        measurement_cache.farfield.thetaphis, use_scattered_farfield ? *E_sc : *E,
+        use_scattered_farfield ? *B_sc : *B, measurement_cache.freq);
+  }
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperator<solver_t>::SetScatteredFieldGridFunctions(const ComplexVector &e)
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  use_scattered_farfield = false;
+  measurement_cache.farfield.E_inc = 0.0;
+  const int ex_idx = measurement_cache.ex_idx;
+  if (surf_post_op.farfield.size() == 0 || !fem_op->GetPlaneWaveOp().HasExcitation(ex_idx))
+  {
+    return;
+  }
+
+  // Scattered field E_s = E - E_inc, using the same Nédélec interpolant of the incident
+  // field which defines the plane wave source, and B_s = -1/(iω) ∇ × E_s.
+  const double omega = measurement_cache.freq.real();
+  ComplexVector e_sc, b_sc;
+  fem_op->GetPlaneWaveIncidentField(ex_idx, omega, e_sc);
+  e_sc.AXPBY(1.0, e, -1.0);
+  const auto &Curl = fem_op->GetCurlMatrix();
+  b_sc.SetSize(Curl.Height());
+  b_sc.UseDevice(true);
+  Curl.Mult(e_sc.Real(), b_sc.Real());
+  Curl.Mult(e_sc.Imag(), b_sc.Imag());
+  b_sc *= -1.0 / (1i * omega);
+  if (!E_sc)
+  {
+    E_sc = std::make_unique<GridFunction>(*E->ParFESpace(), true);
+    B_sc = std::make_unique<GridFunction>(*B->ParFESpace(), true);
+  }
+  E_sc->Real().SetFromTrueDofs(e_sc.Real());
+  E_sc->Imag().SetFromTrueDofs(e_sc.Imag());
+  B_sc->Real().SetFromTrueDofs(b_sc.Real());
+  B_sc->Imag().SetFromTrueDofs(b_sc.Imag());
+  use_scattered_farfield = true;
+
+  // The radar cross section is normalized by the incident field amplitude, which is only
+  // well defined when the plane wave is the sole source of this excitation.
+  const auto &ex_spec = fem_op->GetPortExcitations().excitations.at(ex_idx);
+  if (std::get<0>(ex_spec.IsSimple()))
+  {
+    measurement_cache.farfield.E_inc =
+        fem_op->GetPlaneWaveOp().GetPlaneWave(ex_idx).amplitude;
   }
 }
 
@@ -2051,6 +2098,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   measurement_cache = {};
   measurement_cache.freq = omega;
   measurement_cache.ex_idx = ex_idx;
+  SetScatteredFieldGridFunctions(e);
   MeasureAllImpl();
 
   std::complex<double> freq =

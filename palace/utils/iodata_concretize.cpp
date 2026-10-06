@@ -252,6 +252,24 @@ void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
                                {"LondonDepth", m.lambda_L}});
     }
   }
+
+  // PlaneWave: JSON array with Index, C++ map keyed by Index.
+  if (j_domains.contains("PlaneWave"))
+  {
+    for (auto &j_pw : j_domains["PlaneWave"])
+    {
+      auto idx_it = j_pw.find("Index");
+      if (idx_it == j_pw.end())
+      {
+        continue;
+      }
+      auto it = domains.plane_wave.find(idx_it->get<int>());
+      if (it != domains.plane_wave.end())
+      {
+        ApplyEntries(j_pw, {{"Amplitude", it->second.amplitude}});
+      }
+    }
+  }
 }
 
 void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_boundaries)
@@ -259,7 +277,10 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
   // Absorbing (farfield) boundary. Only touch it if the user declared it.
   if (j_boundaries.contains("Absorbing"))
   {
-    Concretize(j_boundaries["Absorbing"], "Order", boundaries.farfield.order);
+    ApplyEntries(j_boundaries["Absorbing"],
+                 {{"Order", boundaries.farfield.order},
+                  {"DtN", boundaries.farfield.dtn},
+                  {"DtNMaxDegree", boundaries.farfield.dtn_max_degree}});
   }
 
   // Conductivity: JSON array of objects, C++ vector (positional). Match by index.

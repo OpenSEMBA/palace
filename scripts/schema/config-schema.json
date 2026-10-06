@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-1-0",
+  "$id": "urn:palace:schema:2-2-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -166,6 +166,14 @@
           "additionalItems": false,
           "items": {
             "$ref": "#/$defs/CurrentDipole"
+          }
+        },
+        "PlaneWave": {
+          "type": "array",
+          "description": "Array of incident plane wave excitations for scattering problems. Each plane wave defines its own excitation, with excitation index given by its `\"Index\"`. Requires a `\"Driven\"` simulation with `config[\"Boundaries\"][\"Absorbing\"]` boundary conditions.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/PlaneWave"
           }
         },
         "Postprocessing": {
@@ -716,6 +724,50 @@
         }
       }
     },
+    "PlaneWave": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Direction",
+        "Polarization"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Index of this plane wave, which is also the index of the excitation it defines in postprocessing output files."
+        },
+        "Direction": {
+          "description": "Propagation direction of the incident plane wave. Axis-aligned directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. The direction can alternatively be specified as an array of three values, for example `[0.0, 0.0, -1.0]`, which is normalized internally.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DipoleDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "Polarization": {
+          "description": "Direction of the incident electric field, which must be orthogonal to `\"Direction\"`. Accepts the same keywords or three-element arrays as `\"Direction\"`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DipoleDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "Amplitude": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "default": 1.0,
+          "description": "Amplitude of the incident electric field, V/m. The phase of the incident field is zero at the origin of the mesh coordinate system."
+        }
+      }
+    },
     "DomainPostprocessing": {
       "type": "object",
       "title": "Domain Postprocessing",
@@ -1010,6 +1062,23 @@
           "minimum": 1,
           "maximum": 2,
           "default": 1,
+          "x-palace-advanced": true
+        },
+        "DtN": {
+          "type": "boolean",
+          "default": false,
+          "description": "Apply the exact Dirichlet-to-Neumann (nonreflecting) boundary condition for a spherical absorbing boundary: the first-order condition is corrected exactly for all vector spherical harmonic modes up to degree `\"DtNMaxDegree\"`, which greatly reduces spurious reflections. Requires the absorbing boundary to be a sphere, `\"Order\": 1`, and a driven simulation with a uniform frequency sweep."
+        },
+        "DtNMaxDegree": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Maximum degree of the vector spherical harmonics in the DtN boundary condition. If `0`, the degree is selected automatically from the frequency as `ceil(k R) + 6`, where `R` is the sphere radius. The boundary mesh must resolve the corresponding angular variation.",
+          "x-palace-advanced": true
+        },
+        "DtNCenter": {
+          "$ref": "#/$defs/Vector3",
+          "description": "Center `[x, y, z]` of the spherical absorbing boundary for the DtN boundary condition, in mesh length units. If omitted, the center of the bounding box of the boundary is used.",
           "x-palace-advanced": true
         }
       }
@@ -1756,7 +1825,7 @@
         "FarField": {
           "$ref": "#/$defs/FarField",
           "title": "Far Field",
-          "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary."
+          "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary. For incident plane wave excitations, the far field of the scattered field is extracted and the radar cross section is additionally written to `farfield-rcs.csv`."
         }
       }
     },
@@ -1897,7 +1966,7 @@
     "FarField": {
       "type": "object",
       "title": "Far Field",
-      "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary.",
+      "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary. For incident plane wave excitations, the far field of the scattered field is extracted and the radar cross section is additionally written to `farfield-rcs.csv`.",
       "additionalProperties": false,
       "required": [
         "Attributes"

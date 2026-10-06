@@ -341,6 +341,68 @@ CurrentDipoleData::CurrentDipoleData(const json &source)
   moment = source.at("Moment");                               // Required
 }
 
+namespace
+{
+
+// Parse a direction specified either as a Cartesian keyword ("+X", "-Y", ...) or as an
+// array of three values, and return it normalized to unit length.
+std::array<double, 3> ParseUnitVector(const json &source, const std::string &key)
+{
+  const auto &v = source.at(key);  // Required
+  std::array<double, 3> u;
+  if (v.is_array())
+  {
+    u = v.get<std::array<double, 3>>();
+  }
+  else
+  {
+    auto [dir, coord] = ParseStringAsDirection(v.get<std::string>());
+    MFEM_VERIFY(coord == CoordinateSystem::CARTESIAN,
+                "\"" << key << "\" for \"PlaneWave\" must be a Cartesian direction!");
+    u = dir;
+  }
+  const double norm = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+  MFEM_VERIFY(norm > 0.0, "\"" << key << "\" for \"PlaneWave\" must be nonzero!");
+  for (auto &x : u)
+  {
+    x /= norm;
+  }
+  return u;
+}
+
+}  // namespace
+
+PlaneWaveData::PlaneWaveData(const json &source)
+{
+  direction = ParseUnitVector(source, "Direction");        // Required
+  polarization = ParseUnitVector(source, "Polarization");  // Required
+  amplitude = source.value("Amplitude", amplitude);
+
+  // The incident electric field must be transverse to the propagation direction. Allow
+  // only round-off level deviations, then orthogonalize exactly.
+  double k_dot_p = 0.0;
+  for (int d = 0; d < 3; d++)
+  {
+    k_dot_p += direction[d] * polarization[d];
+  }
+  MFEM_VERIFY(std::abs(k_dot_p) < 1.0e-6,
+              "\"Polarization\" for \"PlaneWave\" must be orthogonal to \"Direction\" "
+              "(got dot product "
+                  << k_dot_p << ")!");
+  double norm = 0.0;
+  for (int d = 0; d < 3; d++)
+  {
+    polarization[d] -= k_dot_p * direction[d];
+    norm += polarization[d] * polarization[d];
+  }
+  norm = std::sqrt(norm);
+  for (auto &x : polarization)
+  {
+    x /= norm;
+  }
+  MFEM_VERIFY(amplitude > 0.0, "\"Amplitude\" for \"PlaneWave\" must be positive!");
+}
+
 DomainData::DomainData(const json &domains)
 {
   for (const auto &d : domains.at("Materials"))
@@ -349,6 +411,8 @@ DomainData::DomainData(const json &domains)
   }
   current_dipole = ParseOptionalMap<CurrentDipoleData>(domains, "CurrentDipole",
                                                        "\"CurrentDipole\" source");
+  plane_wave =
+      ParseOptionalMap<PlaneWaveData>(domains, "PlaneWave", "\"PlaneWave\" source");
   postpro = ParseOptional<DomainPostData>(domains, "Postprocessing");
 
   // Store all unique domain attributes.
@@ -392,6 +456,17 @@ FarfieldBoundaryData::FarfieldBoundaryData(const json &absorbing)
   attributes = absorbing.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
   order = absorbing.value("Order", order);
+  dtn = absorbing.value("DtN", dtn);
+  dtn_max_degree = absorbing.value("DtNMaxDegree", dtn_max_degree);
+  if (auto it = absorbing.find("DtNCenter"); it != absorbing.end())
+  {
+    dtn_center = it->get<std::vector<double>>();
+    MFEM_VERIFY(dtn_center.size() == 3, "\"DtNCenter\" must be a 3-element array!");
+  }
+  MFEM_VERIFY(!dtn || order == 1,
+              "Absorbing boundary \"DtN\" requires a first-order (\"Order\": 1) base "
+              "boundary condition!");
+  MFEM_VERIFY(dtn_max_degree >= 0, "\"DtNMaxDegree\" must be non-negative!");
 }
 
 ConductivityData::ConductivityData(const json &boundary)
@@ -1706,6 +1781,12 @@ void Nondimensionalize(const Units &units, ProbeData &data)
 void Nondimensionalize(const Units &units, CurrentDipoleData &data)
 {
   std::transform(data.center.begin(), data.center.end(), data.center.begin(),
+                 LengthScaler(units));
+}
+
+void Nondimensionalize(const Units &units, FarfieldBoundaryData &data)
+{
+  std::transform(data.dtn_center.begin(), data.dtn_center.end(), data.dtn_center.begin(),
                  LengthScaler(units));
 }
 

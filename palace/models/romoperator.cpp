@@ -1535,13 +1535,15 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   }
 
   RHSr.setZero();
-  if (has_RHS2 && wp_pairing_ok && space_op.GetFloquetPortOp().Empty())
+  if (has_RHS2 && wp_pairing_ok && space_op.GetFloquetPortOp().Empty() &&
+      !space_op.GetPlaneWaveOp().HasExcitation(excitation_idx))
   {
     // Wave-port excitation RHS2(ω) = −2iω Σ_p s_full,p over the ports excited by this
     // excitation index (see WavePortOperator::AddExcitationBdrCoefficients), projected
     // from the cached port-space pairings Vᵀs_full,p at this frequency. Pairings are cached
     // for active ports only, so an excitation that also drives an inactive port uses the
-    // assembled excitation vector instead.
+    // assembled excitation vector instead. Plane wave sources are not covered by the
+    // pairings, so their excitations always use the assembled excitation vector.
     BlockTimer bt_wp(Timer::WAVE_PORT);
     for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
     {

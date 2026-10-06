@@ -311,6 +311,22 @@ public:
   CurrentDipoleData(const json &source);
 };
 
+struct PlaneWaveData
+{
+public:
+  // Unit propagation direction k̂ of the incident plane wave.
+  std::array<double, 3> direction{{0.0, 0.0, 0.0}};
+
+  // Unit electric field polarization p̂ of the incident plane wave (orthogonal to k̂).
+  std::array<double, 3> polarization{{0.0, 0.0, 0.0}};
+
+  // Incident electric field amplitude [V/m].
+  double amplitude = 1.0;
+
+  PlaneWaveData() = default;
+  PlaneWaveData(const json &source);
+};
+
 struct DomainData
 {
 public:
@@ -320,6 +336,7 @@ public:
   // Domain objects.
   std::vector<MaterialData> materials = {};
   std::map<int, CurrentDipoleData> current_dipole = {};
+  std::map<int, PlaneWaveData> plane_wave = {};
   DomainPostData postpro = {};
 
   DomainData() = default;
@@ -372,6 +389,15 @@ public:
 
   // List of boundary attributes with farfield absorbing boundary conditions.
   std::vector<int> attributes = {};
+
+  // Exact Dirichlet-to-Neumann (DtN) nonreflecting boundary condition for a spherical
+  // absorbing boundary: the first-order condition is corrected for all vector spherical
+  // harmonic modes of degree up to dtn_max_degree (0 selects the degree automatically from
+  // the frequency). The sphere center defaults to the center of the boundary's bounding
+  // box.
+  bool dtn = false;
+  int dtn_max_degree = 0;
+  std::vector<double> dtn_center = {};
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
@@ -1246,6 +1272,7 @@ void Nondimensionalize(const Units &units, RefinementData &data);
 void Nondimensionalize(const Units &units, MaterialData &data);
 void Nondimensionalize(const Units &units, ProbeData &data);
 void Nondimensionalize(const Units &units, CurrentDipoleData &data);
+void Nondimensionalize(const Units &units, FarfieldBoundaryData &data);
 void Nondimensionalize(const Units &units, ConductivityData &data);
 void Nondimensionalize(const Units &units, ImpedanceData &data);
 void Nondimensionalize(const Units &units, SuperconductorData &data);

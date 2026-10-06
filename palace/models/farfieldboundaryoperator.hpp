@@ -5,11 +5,16 @@
 #define PALACE_MODELS_FARFIELD_BOUNDARY_OPERATOR_HPP
 
 #include <complex>
+#include <memory>
+#include <vector>
 #include <mfem.hpp>
+#include "linalg/operator.hpp"
+#include "models/sphericaldtn.hpp"
 
 namespace palace
 {
 
+class FiniteElementSpace;
 class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
@@ -38,6 +43,13 @@ private:
   // First- or second-order absorbing boundary condition.
   int order;
 
+  // Optional exact DtN correction for a spherical absorbing boundary, and the (background)
+  // material index adjacent to it.
+  std::unique_ptr<SphericalDtNData> dtn_data;
+  int dtn_max_degree = 0, dtn_mat = -1;
+  void SetUpDtN(const config::FarfieldBoundaryData &farfield, ProblemType problem_type,
+                const mfem::ParMesh &mesh);
+
   mfem::Array<int> SetUpBoundaryProperties(const config::FarfieldBoundaryData &farfield,
                                            ProblemType problem_type,
                                            const mfem::ParMesh &mesh);
@@ -54,6 +66,20 @@ public:
 
   // Returns order of absorbing BC approximation.
   int GetOrder() const { return order; }
+
+  // Returns whether the exact spherical DtN boundary condition is used.
+  bool HasDtN() const { return dtn_data != nullptr; }
+  const SphericalDtNData *GetDtNData() const { return dtn_data.get(); }
+
+  // Maximum vector spherical harmonic degree of the DtN boundary condition at frequency ω.
+  int GetDtNMaxDegree(double omega) const;
+
+  // Get the low-rank DtN correction to the first-order absorbing boundary condition at
+  // frequency ω (null if not using the DtN boundary condition). The rows and columns of the
+  // given essential true dofs are eliminated.
+  std::unique_ptr<ComplexOperator> GetDtNOperator(double omega,
+                                                  FiniteElementSpace &nd_fespace,
+                                                  const mfem::Array<int> *dbc_tdof_list);
 
   // Add contributions to system matrices from first- or second-order absorbing boundary
   // condition.

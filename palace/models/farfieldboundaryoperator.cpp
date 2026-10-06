@@ -3,7 +3,10 @@
 
 #include "farfieldboundaryoperator.hpp"
 
+#include <cmath>
+#include <limits>
 #include <set>
+#include "fem/fespace.hpp"
 #include "linalg/densematrix.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -33,6 +36,97 @@ FarfieldBoundaryOperator::FarfieldBoundaryOperator(
     std::sort(farfield_attr.begin(), farfield_attr.end());
     utils::PrettyPrint(farfield_attr);
   }
+  SetUpDtN(farfield, problem_type, mesh);
+}
+
+void FarfieldBoundaryOperator::SetUpDtN(const config::FarfieldBoundaryData &farfield,
+                                        ProblemType problem_type, const mfem::ParMesh &mesh)
+{
+  if (!farfield.dtn || farfield_attr.Size() == 0)
+  {
+    return;
+  }
+  MFEM_VERIFY(problem_type == ProblemType::DRIVEN,
+              "Spherical DtN absorbing boundaries are only available for driven "
+              "simulations!");
+  MFEM_VERIFY(order == 1, "Spherical DtN absorbing boundaries require \"Order\": 1!");
+
+  // The medium adjacent to the absorbing boundary must be unique and isotropic.
+  const auto bdr_attr_mat = mat_op.GetBdrAttributeToMaterial();
+  int mat_range[2] = {std::numeric_limits<int>::max(), std::numeric_limits<int>::max()};
+  for (auto attr : mat_op.GetCeedBdrAttributes(farfield_attr))
+  {
+    const int k = bdr_attr_mat[attr - 1];
+    if (k >= 0)
+    {
+      mat_range[0] = std::min(mat_range[0], k);
+      mat_range[1] = std::min(mat_range[1], -k);
+    }
+  }
+  Mpi::GlobalMin(2, mat_range, mesh.GetComm());
+  MFEM_VERIFY(mat_range[0] < std::numeric_limits<int>::max() &&
+                  mat_range[0] == -mat_range[1],
+              "Spherical DtN absorbing boundaries must be adjacent to a single material!");
+  dtn_mat = mat_range[0];
+  const auto &muinv = mat_op.GetInvPermeability()(dtn_mat);
+  const auto &eps = mat_op.GetPermittivityReal()(dtn_mat);
+  MFEM_VERIFY(muinv(0, 0) == muinv(1, 1) && muinv(0, 0) == muinv(2, 2) &&
+                  eps(0, 0) == eps(1, 1) && eps(0, 0) == eps(2, 2),
+              "Spherical DtN absorbing boundaries require an isotropic adjacent material!");
+
+  dtn_max_degree = farfield.dtn_max_degree;
+  dtn_data = std::make_unique<SphericalDtNData>(mesh, farfield_attr, farfield.dtn_center);
+  const auto &c = dtn_data->GetCenter();
+  Mpi::Print(" Exact spherical DtN boundary condition: center = ({:.3e}, {:.3e}, {:.3e}), "
+             "radius = {:.3e} (nondimensional), maximum degree = {}\n",
+             c[0], c[1], c[2], dtn_data->GetRadius(),
+             (dtn_max_degree > 0) ? std::to_string(dtn_max_degree) : "automatic");
+}
+
+int FarfieldBoundaryOperator::GetDtNMaxDegree(double omega) const
+{
+  MFEM_VERIFY(dtn_data, "No spherical DtN boundary condition!");
+  if (dtn_max_degree > 0)
+  {
+    return dtn_max_degree;
+  }
+  const double k = omega * std::sqrt(mat_op.GetPermittivityReal()(dtn_mat)(0, 0) /
+                                     mat_op.GetInvPermeability()(dtn_mat)(0, 0));
+  return static_cast<int>(std::ceil(k * dtn_data->GetRadius())) + 6;
+}
+
+std::unique_ptr<ComplexOperator>
+FarfieldBoundaryOperator::GetDtNOperator(double omega, FiniteElementSpace &nd_fespace,
+                                         const mfem::Array<int> *dbc_tdof_list)
+{
+  if (!dtn_data)
+  {
+    return {};
+  }
+  // The DtN correction to the first-order condition is μ⁻¹ Σ_j (λ_j - ik) w_j w_jᵀ, where
+  // ik/μ = iω/Z is the coefficient of the first-order absorbing boundary condition.
+  const double muinv = mat_op.GetInvPermeability()(dtn_mat)(0, 0);
+  const double k = omega * std::sqrt(mat_op.GetPermittivityReal()(dtn_mat)(0, 0) / muinv);
+  const double R = dtn_data->GetRadius();
+  const int n_max = GetDtNMaxDegree(omega);
+  dtn_data->SetMaxDegree(n_max, nd_fespace);
+  const int n_modes = dtn::NumModes(n_max);
+  std::vector<std::complex<double>> g(n_modes);
+  for (int n = 1; n <= n_max; n++)
+  {
+    const std::complex<double> g_te =
+        muinv * (dtn::EigenvalueTE(n, k, R) - std::complex<double>(0.0, k));
+    const std::complex<double> g_tm =
+        muinv * (dtn::EigenvalueTM(n, k, R) - std::complex<double>(0.0, k));
+    for (int m = -n; m <= n; m++)
+    {
+      const int j = n * n - 1 + m + n;
+      g[2 * j] = g_te;
+      g[2 * j + 1] = g_tm;
+    }
+  }
+  return std::make_unique<SphericalDtNOperator>(*dtn_data, n_modes, std::move(g),
+                                                nd_fespace.GetTrueVSize(), dbc_tdof_list);
 }
 
 mfem::Array<int> FarfieldBoundaryOperator::SetUpBoundaryProperties(

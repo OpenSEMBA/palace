@@ -54,6 +54,12 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                  iodata.solver.driven.prom_indices.size());
     adaptive = false;
   }
+  if (adaptive && space_op.GetFarfieldOp().HasDtN())
+  {
+    Mpi::Warning("Adaptive frequency sweep is not available with spherical DtN absorbing "
+                 "boundaries!\nReverting to uniform sweep!\n");
+    adaptive = false;
+  }
   SaveMetadata(space_op.GetNDSpaces());
   Mpi::Print("\nComputing {}frequency response for:\n{}", adaptive ? "adaptive fast " : "",
              port_excitations.FmtLog());
