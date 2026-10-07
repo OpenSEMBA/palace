@@ -24,7 +24,8 @@ FarfieldBoundaryOperator::FarfieldBoundaryOperator(const IoData &iodata,
 FarfieldBoundaryOperator::FarfieldBoundaryOperator(
     const config::FarfieldBoundaryData &farfield, ProblemType problem_type,
     const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
-  : mat_op(mat_op), farfield_attr(SetUpBoundaryProperties(farfield, problem_type, mesh))
+  : mat_op(mat_op), farfield_attr(SetUpBoundaryProperties(farfield, problem_type, mesh)),
+    radius(farfield.radius)
 {
   // Print out BC info for all farfield attributes.
   if (farfield_attr.Size())
@@ -32,6 +33,10 @@ FarfieldBoundaryOperator::FarfieldBoundaryOperator(
     Mpi::Print("\nConfiguring Robin absorbing BC (order {:d}) at attributes:\n", order);
     std::ranges::sort(farfield_attr);
     utils::PrettyPrint(farfield_attr);
+    if (radius > 0.0)
+    {
+      Mpi::Print(" Absorbing boundary curvature radius = {:.3e}\n", radius);
+    }
   }
 }
 
@@ -139,21 +144,41 @@ void FarfieldBoundaryOperator::AddExtraSystemBoundaryCurlCurlBdrCoefficients(
 void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
     double omega, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi)
 {
-  // Real-ω second-order ABC: the term is i·(0.5/ω)·(curl-curl). At real ω the scalar
-  // 0.5/ω is real, so the whole contribution is imaginary and lands on dfbi.
-  AddExtraSystemBoundaryCurlCurlBdrCoefficients(0.5 / omega, dfbi);
+  // Second-order ABC: the assembled term is i·s·(boundary curl-curl) with
+  // s = β/c₀ and β = 1/(2ik + 2/R) the Bayliss-Turkel coefficient for a boundary of
+  // curvature radius R (R = 0 means planar/infinite radius, the plane-wave case). For a
+  // planar boundary s = 0.5/ω is real and the whole contribution is imaginary (dfbi).
+  // For a spherical/circular boundary the curvature term gives
+  // s = (ω + i/R) / (2(ω² + 1/R²)), whose imaginary part contributes to the real part of
+  // the system matrix (dfbr). The curvature correction assumes vacuum at the absorbing
+  // boundary (internal c₀ = 1).
+  std::complex<double> s(0.5 / omega, 0.0);
+  if (radius > 0.0)
+  {
+    const double inv_r = 1.0 / radius;
+    s = std::complex<double>(omega, inv_r) / (2.0 * (omega * omega + inv_r * inv_r));
+  }
+  AddExtraSystemBoundaryCurlCurlBdrCoefficients(s.real(), dfbi);
+  if (s.imag() != 0.0)
+  {
+    AddExtraSystemBoundaryCurlCurlBdrCoefficients(-s.imag(), dfbr);
+  }
 }
 
 void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
     std::complex<double> omega, MaterialPropertyCoefficient &dfbr,
     MaterialPropertyCoefficient &dfbi)
 {
-  // Complex-ω second-order ABC for the eigenmode nonlinear solve. The contribution is
-  // i·(0.5/ω)·(curl-curl); with ω complex, s = 0.5/ω is complex and i·s splits as
-  // i·(s.real() + i·s.imag()) = -s.imag() + i·s.real(), so the real part -s.imag() goes
-  // on dfbr and the imaginary part s.real() on dfbi. For real ω (s.imag() == 0) this
-  // reduces to the double overload (whole term on dfbi).
-  const std::complex<double> s = 0.5 / omega;
+  // Complex-ω second-order ABC for the eigenmode nonlinear solve; same coefficient as the
+  // real-ω overload with ω complex, split into the real (dfbr) and imaginary (dfbi) parts
+  // of i·s.
+  std::complex<double> s = 0.5 / omega;
+  if (radius > 0.0)
+  {
+    const double inv_r = 1.0 / radius;
+    s = (omega + std::complex<double>(0.0, inv_r)) /
+        (2.0 * (omega * omega + inv_r * inv_r));
+  }
   AddExtraSystemBoundaryCurlCurlBdrCoefficients(s.real(), dfbi);
   if (s.imag() != 0.0)
   {

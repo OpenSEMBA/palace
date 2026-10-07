@@ -260,6 +260,7 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
   if (j_boundaries.contains("Absorbing"))
   {
     Concretize(j_boundaries["Absorbing"], "Order", boundaries.farfield.order);
+    Concretize(j_boundaries["Absorbing"], "Radius", boundaries.farfield.radius);
   }
 
   // Conductivity: JSON array of objects, C++ vector (positional). Match by index.

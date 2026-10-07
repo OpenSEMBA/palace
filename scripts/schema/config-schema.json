@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-1-0",
+  "$id": "urn:palace:schema:2-2-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -227,6 +227,15 @@
           "$ref": "#/$defs/Absorbing",
           "title": "Absorbing Boundary",
           "description": "Farfield absorbing (scattering) boundary conditions. These are artificial boundary conditions applied at farfield boundaries to minimize reflections."
+        },
+        "PlaneWave": {
+          "type": "array",
+          "title": "Plane Wave",
+          "description": "Array of incident plane wave excitations applied on absorbing boundaries. Only available for frequency domain driven simulations. The incident field is injected through the absorbing boundary as a non-homogeneous radiation condition.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/PlaneWave"
+          }
         },
         "Conductivity": {
           "type": "array",
@@ -1011,6 +1020,87 @@
           "maximum": 2,
           "default": 1,
           "x-palace-advanced": true
+        },
+        "Radius": {
+          "type": "number",
+          "description": "Radius of curvature of the absorbing boundary, for a spherical or circular boundary centered at the origin. Enables the Bayliss-Turkel 2/R curvature term in the second-order absorbing boundary condition. The default (0) corresponds to a planar boundary with infinite radius of curvature.",
+          "minimum": 0,
+          "default": 0,
+          "x-palace-advanced": true
+        }
+      }
+    },
+    "PlaneWave": {
+      "type": "object",
+      "title": "Plane Wave",
+      "description": "Incident plane wave excitation injected through an absorbing boundary. Only available for frequency domain driven simulations.",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes",
+        "Direction"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this plane wave, used in postprocessing output files. Must be unique across all port and source types.",
+          "exclusiveMinimum": 0
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes with absorbing boundary conditions where the incident plane wave enters the domain."
+        },
+        "Excitation": {
+          "description": "Excitation flag or positive excitation index. When excited, injects the incident plane wave.",
+          "default": false,
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/ExcitationIndex"
+            }
+          ]
+        },
+        "Direction": {
+          "type": "array",
+          "description": "Propagation direction of the incident plane wave (normalized internally).",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "Polarization": {
+          "type": "array",
+          "description": "Electric field polarization direction (normalized internally, must be orthogonal to Direction).",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [1.0, 0.0, 0.0]
+        },
+        "Amplitude": {
+          "type": "number",
+          "description": "Incident electric field amplitude, V/m. The radar cross section is independent of this value for linear problems.",
+          "exclusiveMinimum": 0,
+          "default": 1.0
+        },
+        "Phase": {
+          "type": "number",
+          "description": "Incident electric field phase, radians.",
+          "default": 0.0
+        },
+        "ReferencePoint": {
+          "type": "array",
+          "description": "Reference point defining the zero of the incident wave phase, in mesh length units.",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [0.0, 0.0, 0.0]
         }
       }
     },
@@ -1919,6 +2009,11 @@
           "items": {
             "$ref": "#/$defs/ThetaPhi"
           }
+        },
+        "Monostatic": {
+          "type": "boolean",
+          "description": "For each excited plane wave, additionally evaluate the scattered far field in the backscatter direction and include it in the RCS table.",
+          "default": false
         }
       }
     },

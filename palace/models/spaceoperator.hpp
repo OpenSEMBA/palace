@@ -17,6 +17,7 @@
 #include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/planewaveoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
@@ -80,6 +81,7 @@ private:
   LumpedPortOperator lumped_port_op;
   WavePortOperator wave_port_op;
   FloquetPortOperator floquet_port_op;
+  PlaneWaveOperator plane_wave_op;
   SurfaceCurrentOperator surf_j_op;
 
   PortExcitations port_excitation_helper;
@@ -173,11 +175,13 @@ public:
   auto &GetLumpedPortOp() { return lumped_port_op; }
   auto &GetWavePortOp() { return wave_port_op; }
   auto &GetFloquetPortOp() { return floquet_port_op; }
+  auto &GetPlaneWaveOp() { return plane_wave_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
   auto &GetSurfaceConductivityOp() { return surf_sigma_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetFloquetPortOp() const { return floquet_port_op; }
+  const auto &GetPlaneWaveOp() const { return plane_wave_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
   const auto &GetRationalImpedanceOp() const { return surf_rz_op; }
   const auto &GetSurfaceConductivityOp() const { return surf_sigma_op; }
@@ -397,6 +401,13 @@ public:
   // excitation is nonzero (and thus is true most of the time).
   bool GetExcitationVector(int excitation_idx, Vector &RHS);
   bool GetExcitationVector(int excitation_idx, double omega, ComplexVector &RHS);
+
+  // Assemble the plane wave scattered-field excitation vector: the dielectric volume
+  // contrast sources and the non-homogeneous PEC boundary condition
+  // n × E_s = -n × E_inc, the latter eliminated from the RHS using the (unconstrained)
+  // system operator.
+  void AddPlaneWaveExcitationVector(const ComplexOperator &A, int excitation_idx,
+                                    double omega, ComplexVector &RHS);
 
   // Separate out RHS vector as RHS = iω RHS1 + RHS2(ω). The return value indicates whether
   // or not the excitation is nonzero (and thus is true most of the time).
